@@ -193,6 +193,16 @@ class TrainerEditor(tk.Tk):
         self._create_menu()
         self._create_panes()
         self._create_widgets()
+        self._center_window()
+
+    def _center_window(self):
+        """Center the window on the user's screen."""
+        self.update_idletasks()
+        width = self.winfo_width()
+        height = self.winfo_height()
+        x = (self.winfo_screenwidth() // 2) - (width // 2)
+        y = (self.winfo_screenheight() // 2) - (height // 2)
+        self.geometry(f"{width}x{height}+{x}+{y}")
 
     def _create_menu(self):
         menubar = tk.Menu(self)
