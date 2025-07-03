@@ -21,30 +21,60 @@ gbaCharMap = {
     "_END": ""
 }
 
-def decodeMacroName(charArray: str):
+def decodeMacroName(charArray: str) -> str:
     tokens = re.findall(r'_(\w+)', charArray)
     return ''.join(gbaCharMap.get(f"_{token}", '?') for token in tokens)
 
 def parseTrainers(filePath):
-    with open(filePath, encoding="utf-8") as f:
-        content = f.read()
-
-    trainerData = re.findall(r"\[(.*?)\] = \{(.*?)\},", content, re.DOTALL)
+    """Parse trainer definitions from the given file."""
     trainers = []
+    start_re = re.compile(r"\[(.+?)\]\s*=\s*\{")
 
-    for identifier, body in trainerData:
-        nameMatch = re.search(r'\.trainerName\s*=\s*\{([^}]+)\}', body)
-        classMatch = re.search(r'\.trainerClass\s*=\s*(\w+)', body)
-        spriteMatch = re.search(r'\.trainerPic\s*=\s*(\w+)', body)
+    with open(filePath, encoding="utf-8") as f:
+        lines = f.readlines()
 
-        trainerName = decodeMacroName(nameMatch.group(1)) if nameMatch else "Unknown"
+    collecting = False
+    brace_count = 0
+    body_lines = []
+    identifier = ""
 
-        trainers.append({
-            "id": identifier.strip(),
-            "name": trainerName,
-            "class": classMatch.group(1) if classMatch else "???",
-            "sprite": spriteMatch.group(1).lower() + ".png" if spriteMatch else None,
-        })
+    for line in lines:
+        if not collecting:
+            match = start_re.search(line)
+            if match:
+                collecting = True
+                identifier = match.group(1)
+                brace_count = 1
+                body_lines = []
+                continue
+        else:
+            body_lines.append(line)
+            brace_count += line.count('{')
+            brace_count -= line.count('}')
+
+            if brace_count == 0:
+                body = ''.join(body_lines)
+
+                nameMatch = re.search(r'\.trainerName\s*=\s*\{([^}]+)\}', body)
+                classMatch = re.search(r'\.trainerClass\s*=\s*(\w+)', body)
+                spriteMatch = re.search(r'\.trainerPic\s*=\s*(\w+)', body)
+
+                trainerName = decodeMacroName(nameMatch.group(1)) if nameMatch else "Unknown"
+                
+                if trainerName == "":
+                    trainerName = "???"
+
+                trainers.append({
+                    "id": identifier.strip(),
+                    "name": trainerName,
+                    "class": classMatch.group(1) if classMatch else "???",
+                    "sprite": spriteMatch.group(1).lower() + ".png" if spriteMatch else None,
+                })
+
+                collecting = False
+                brace_count = 0
+                body_lines = []
+                identifier = ""
 
     return trainers
 
