@@ -64,18 +64,21 @@ def parseTrainerParties(path: str):
             ]
     return parties
 
-def rewriteTrainerParty(path: str, party_name: str, mons: list) -> None:
-    # Rewrite a trainer party definition.
-    pattern_start = re.compile(r'struct\s+\w+\s+' + re.escape(party_name) + r'\[\]\s*=\s*\{')
+def rewriteTrainerParty(path: str, party_name: str, mons: list, struct_type: str = None) -> None:
+    # Rewrite a trainer party definition, optionally updating the struct type.
+    pattern_start = re.compile(r'struct\s+(\w+)\s+' + re.escape(party_name) + r'\[\]\s*=\s*\{')
     with open(path, encoding='utf-8', errors='ignore') as f:
         lines = f.readlines()
 
     inside = False
     start = end = None
+    header_type = None
     for i, line in enumerate(lines):
         if not inside:
-            if pattern_start.search(line):
+            m = pattern_start.search(line)
+            if m:
                 start = i
+                header_type = m.group(1)
                 inside = True
         else:
             if line.strip().startswith('};'):
@@ -85,7 +88,10 @@ def rewriteTrainerParty(path: str, party_name: str, mons: list) -> None:
     if start is None or end is None:
         return
 
-    new_lines = [lines[start]]
+    if struct_type is None:
+        struct_type = header_type if header_type else 'TrainerMonNoItemDefaultMoves'
+
+    new_lines = [f'struct {struct_type} {party_name}[] = {{\n']
     for mon in mons:
         new_lines.append('    {\n')
         new_lines.append(f'        .lvl = {mon["level"]},\n')
@@ -136,6 +142,18 @@ def decodeTrainerName(tokenStr: str) -> str:
             break
         name.append(charMap.get(t, ''))
     return ''.join(name)
+
+def flagsToUnionAndStruct(flags: str):
+    has_item = 'PARTY_FLAG_HAS_ITEM' in flags
+    custom_moves = 'PARTY_FLAG_CUSTOM_MOVES' in flags
+    if has_item and custom_moves:
+        return '.ItemCustomMoves', 'TrainerMonItemCustomMoves'
+    elif has_item:
+        return '.ItemDefaultMoves', 'TrainerMonItemDefaultMoves'
+    elif custom_moves:
+        return '.NoItemCustomMoves', 'TrainerMonNoItemCustomMoves'
+    else:
+        return '.NoItemDefaultMoves', 'TrainerMonNoItemDefaultMoves'
 
 def parseTrainerData(path: str):
     # Parse the trainer data file and return list of dictionaries.
@@ -246,6 +264,7 @@ def rewriteTrainerOptions(path: str, trainerId: str, gender: str,
     pattern_double = re.compile(r'(\.doubleBattle\s*=\s*)(TRUE|FALSE)(,?)')
     pattern_partyflags = re.compile(r'(\.partyFlags\s*=\s*)([^,]+)(,?)')
     pattern_items = re.compile(r'(\.items\s*=\s*\{)([^}]*)(\})')
+    pattern_party_union = re.compile(r'(\.party\s*=\s*\{\s*)(\.\w+)(\s*=\s*sParty_[A-Za-z0-9_]+)')
 
     with open(path, encoding='utf-8', errors='ignore') as f:
         lines = f.readlines()
@@ -273,6 +292,11 @@ def rewriteTrainerOptions(path: str, trainerId: str, gender: str,
             if m:
                 items_str = ', '.join(items)
                 lines[i] = pattern_items.sub(rf"\1{items_str}\3", line)
+                continue
+            m = pattern_party_union.search(line)
+            if m:
+                union, _ = flagsToUnionAndStruct(partyFlags)
+                lines[i] = pattern_party_union.sub(rf"\1{union}\3", line)
                 continue
             if line.strip().startswith('},'):
                 break
@@ -427,21 +451,21 @@ class TrainerEditor(tk.Tk):
         self.spinMusic = tk.Spinbox(self.frameOptions, from_=0, to=255, width=5)
         self.spinMusic.grid(row=0, column=1)
         self.doubleVar = tk.BooleanVar()
+        self.customItemVar = tk.BooleanVar()
+        self.customMoveVar = tk.BooleanVar()
         self.chkDouble = ttk.Checkbutton(self.frameOptions, text="Double Battle", variable=self.doubleVar)
-        self.chkDouble.grid(row=0, column=2)
         ttk.Label(self.frameOptions, text="AI Flags:").grid(row=1, column=0)
         self.spinAI = tk.Spinbox(self.frameOptions, from_=0, to=255, width=5)
         self.spinAI.grid(row=1, column=1)
-        self.customItemVar = tk.BooleanVar()
         self.chkCustomItems = ttk.Checkbutton(self.frameOptions, text="Custom Held Items", variable=self.customItemVar)
-        self.chkCustomItems.grid(row=1, column=2)
-        self.customMoveVar = tk.BooleanVar()
         self.chkCustomMoves = ttk.Checkbutton(self.frameOptions, text="Custom Movesets", variable=self.customMoveVar)
-        self.chkCustomMoves.grid(row=2, column=2)
+        self.chkDouble.grid(row=2, column=0, sticky="w")
+        self.chkCustomItems.grid(row=2, column=1, sticky="w")
+        self.chkCustomMoves.grid(row=2, column=2, sticky="w")
 
         # Party
         self.frameParty = ttk.LabelFrame(self.frameRight, text="Party")
-        self.frameParty.grid(row=2, column=0, columnspan=2, padx=10, pady=5, sticky="nsew")
+        self.frameParty.grid(row=3, column=0, columnspan=2, padx=10, pady=5, sticky="nsew")
         self.frameParty.grid_rowconfigure(1, weight=1)
 
         self.partyTree = ttk.Treeview(self.frameParty, columns=("Species", "Level"), show="headings", height=6)
@@ -455,6 +479,9 @@ class TrainerEditor(tk.Tk):
         btnAdd.grid(row=2, column=0)
         btnRemove = ttk.Button(self.frameParty, text="- Remove", command=self.remove_party_mon)
         btnRemove.grid(row=2, column=1)
+        btnUpdate = ttk.Button(self.frameParty, text="Update", command=self.update_party_mon)
+        btnUpdate.grid(row=2, column=2)
+        self.partyTree.bind("<<TreeviewSelect>>", self.on_party_select)
 
         ttk.Label(self.frameParty, text="Species:").grid(row=3, column=0)
         self.comboSpecies = ttk.Combobox(self.frameParty, values=self.species_names, state="readonly")
@@ -477,7 +504,7 @@ class TrainerEditor(tk.Tk):
 
         # Single save button for all edits
         self.btnSaveAll = ttk.Button(self.frameRight, text="Save", command=self.saveAll)
-        self.btnSaveAll.grid(row=3, column=1, sticky="e", padx=10, pady=(0,5))
+        self.btnSaveAll.grid(row=2, column=1, sticky="e", padx=10, pady=(0,5))
 
     def on_select_trainer(self, event):
         sel = self.trainerList.selection()
@@ -518,6 +545,25 @@ class TrainerEditor(tk.Tk):
         if sel:
             self.partyTree.delete(sel[0])
 
+    def on_party_select(self, event):
+        sel = self.partyTree.selection()
+        if not sel:
+            return
+        species, level = self.partyTree.item(sel[0], 'values')
+        self.comboSpecies.set(species)
+        self.spinLevel.delete(0, tk.END)
+        self.spinLevel.insert(0, level)
+
+    def update_party_mon(self):
+        sel = self.partyTree.selection()
+        if not sel:
+            return
+        species = self.comboSpecies.get()
+        level = self.spinLevel.get()
+        if not species or not level:
+            return
+        self.partyTree.item(sel[0], values=(species, level))
+
     def saveTrainerName(self):
         if self.current_trainer_index is None:
             return
@@ -556,6 +602,12 @@ class TrainerEditor(tk.Tk):
         if self.cfruFolder:
             path = os.path.join(self.cfruFolder, defaultRelativePath)
             rewriteTrainerOptions(path, data['id'], data['gender'], data['double'], data['partyFlags'], data['items'])
+            party_name = data.get('party')
+            if party_name and party_name in self.parties:
+                party_path = os.path.join(self.cfruFolder, partyRelativePath)
+                union, struct_type = flagsToUnionAndStruct(data['partyFlags'])
+                mons = self.parties[party_name]
+                rewriteTrainerParty(party_path, party_name, mons, struct_type)
 
     def saveParty(self):
         if self.current_trainer_index is None:
@@ -572,7 +624,8 @@ class TrainerEditor(tk.Tk):
         self.parties[party_name] = mons
         if self.cfruFolder:
             path = os.path.join(self.cfruFolder, partyRelativePath)
-            rewriteTrainerParty(path, party_name, mons)
+            union, struct_type = flagsToUnionAndStruct(data.get('partyFlags', '0'))
+            rewriteTrainerParty(path, party_name, mons, struct_type)
 
     def saveAll(self):
         # Save name and option edits.
