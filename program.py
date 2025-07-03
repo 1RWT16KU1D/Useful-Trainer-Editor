@@ -97,6 +97,26 @@ def rewrite_trainer_party(path: str, party_name: str, mons: list) -> None:
     with open(path, 'w', encoding='utf-8', errors='ignore') as f:
         f.writelines(lines)
 
+def parse_pokemon_names(path: str) -> dict:
+    """Parse the DPE Pokemon name table and return mapping of species id to name."""
+    names = {}
+    with open(path, encoding='utf-8', errors='ignore') as f:
+        lines = [l.strip() for l in f]
+    i = 0
+    while i < len(lines):
+        line = lines[i]
+        if line.startswith('#org @NAME_'):
+            spec = line.split('@NAME_')[1].strip()
+            if not spec.startswith('SPECIES_'):
+                spec = 'SPECIES_' + spec
+            if i + 1 < len(lines):
+                name = lines[i + 1].strip()
+                if name:
+                    names[spec] = name
+                i += 1
+        i += 1
+    return names
+
 def encode_trainer_name(name: str) -> str:
     """Encode a string into a comma-separated list of tokens."""
     tokens = []
@@ -286,11 +306,15 @@ class TrainerEditor(tk.Tk):
         self.trainer_data = []
         self.parties = {}
         self.species_names = []
+        self.species_name_map = {}
+        self.name_from_species = {}
+        self.species_from_name = {}
         self.current_trainer_index = None
         self._create_menu()
         self._create_panes()
         self._create_widgets()
         self._center_window()
+        self.after(100, self.startup_folders)
 
     def _center_window(self):
         """Center the window on the user's screen."""
@@ -301,10 +325,16 @@ class TrainerEditor(tk.Tk):
         y = (self.winfo_screenheight() // 2) - (height // 2)
         self.geometry(f"{width}x{height}+{x}+{y}")
 
+    def startup_folders(self):
+        """Prompt the user to select CFRU and DPE folders when launching."""
+        self.open_cfru_folder()
+        self.open_dpe_folder()
+
     def _create_menu(self):
         menubar = tk.Menu(self)
         fileMenu = tk.Menu(menubar, tearoff=0)
-        fileMenu.add_command(label="Open CFRU Folder", command=self.open_folder)
+        fileMenu.add_command(label="Open CFRU Folder", command=self.open_cfru_folder)
+        fileMenu.add_command(label="Open DPE Folder", command=self.open_dpe_folder)
         fileMenu.add_separator()
         fileMenu.add_command(label="Exit", command=self.quit)
         menubar.add_cascade(label="File", menu=fileMenu)
@@ -465,7 +495,8 @@ class TrainerEditor(tk.Tk):
         party_name = data.get('party')
         if party_name and party_name in self.parties:
             for mon in self.parties[party_name]:
-                self.partyTree.insert('', 'end', values=(mon['species'], mon['level']))
+                disp = self.name_from_species.get(mon['species'], mon['species'])
+                self.partyTree.insert('', 'end', values=(disp, mon['level']))
 
     def add_party_mon(self):
         species = self.comboSpecies.get()
@@ -496,8 +527,8 @@ class TrainerEditor(tk.Tk):
         item_id = self.trainerList.get_children()[self.current_trainer_index]
         self.trainerList.item(item_id, values=(self.current_trainer_index, display))
 
-        if hasattr(self, 'selectedFolder'):
-            path = os.path.join(self.selectedFolder, defaultRelativePath)
+        if self.cfruFolder:
+            path = os.path.join(self.cfruFolder, defaultRelativePath)
             rewrite_trainer_name(path, tid, encoded)
 
     def save_options(self):
@@ -514,8 +545,8 @@ class TrainerEditor(tk.Tk):
         data['partyFlags'] = ' | '.join(flags) if flags else '0'
         data['items'] = [self.id_from_name.get(var.get(), 'ITEM_NONE') for var in self.itemVars]
 
-        if hasattr(self, 'selectedFolder'):
-            path = os.path.join(self.selectedFolder, defaultRelativePath)
+        if self.cfruFolder:
+            path = os.path.join(self.cfruFolder, defaultRelativePath)
             rewrite_trainer_options(path, data['id'], data['gender'], data['double'], data['partyFlags'], data['items'])
 
     def save_party(self):
@@ -528,10 +559,11 @@ class TrainerEditor(tk.Tk):
         mons = []
         for item in self.partyTree.get_children():
             species, level = self.partyTree.item(item, 'values')
-            mons.append({'level': int(level), 'species': species})
+            spec_id = self.species_from_name.get(species, species)
+            mons.append({'level': int(level), 'species': spec_id})
         self.parties[party_name] = mons
-        if hasattr(self, 'selectedFolder'):
-            path = os.path.join(self.selectedFolder, partyRelativePath)
+        if self.cfruFolder:
+            path = os.path.join(self.cfruFolder, partyRelativePath)
             rewrite_trainer_party(path, party_name, mons)
 
     def save_all(self):
@@ -541,11 +573,15 @@ class TrainerEditor(tk.Tk):
         self.save_party()
 
     # === Placeholder command methods ===
-    def open_folder(self):
+    def open_cfru_folder(self):
         """Prompt the user to select the base CFRU folder and load files."""
-        self.selectFolder()
+        self.select_cfru_folder()
 
-    def selectFolder(self):
+    def open_dpe_folder(self):
+        """Prompt the user to select the DPE folder and load name data."""
+        self.select_dpe_folder()
+
+    def select_cfru_folder(self):
         """Open a folder selection dialog and validate required files."""
         folder = filedialog.askdirectory(title="Select CFRU folder")
         if not folder:
@@ -566,17 +602,45 @@ class TrainerEditor(tk.Tk):
             )
             return
 
-        self.selectedFolder = folder
+        self.cfruFolder = folder
         self.parties = parse_trainer_parties(trainer_parties_path)
         species = {mon['species'] for mons in self.parties.values() for mon in mons}
         self.species_names = sorted(species)
-        self.comboSpecies['values'] = self.species_names
+        self.update_species_box()
         self.comboHeld['values'] = self.item_names
         self.load_trainer_data(trainer_data_path)
         messagebox.showinfo(
             "Success",
             f"Loaded {len(self.trainer_data)} trainers from {folder}!"
         )
+
+    def update_species_box(self):
+        """Update species combobox options based on loaded names."""
+        if self.species_name_map:
+            names = [self.species_name_map.get(s, s) for s in self.species_names]
+            self.comboSpecies['values'] = names
+        else:
+            self.comboSpecies['values'] = self.species_names
+
+    def select_dpe_folder(self):
+        """Open a folder selection dialog for the DPE folder."""
+        folder = filedialog.askdirectory(title="Select DPE folder")
+        if not folder:
+            return
+
+        name_path = os.path.join(folder, 'strings', 'Pokemon_Name_Table.string')
+        if not os.path.isfile(name_path):
+            messagebox.showerror(
+                "File Not Found",
+                f"Could not locate Pokemon name table at:\n{name_path}"
+            )
+            return
+
+        self.dpeFolder = folder
+        self.species_name_map = parse_pokemon_names(name_path)
+        self.name_from_species = self.species_name_map
+        self.species_from_name = {v: k for k, v in self.species_name_map.items()}
+        self.update_species_box()
 
     def load_trainer_data(self, path: str):
         """Parse trainer data file and populate the tree view."""

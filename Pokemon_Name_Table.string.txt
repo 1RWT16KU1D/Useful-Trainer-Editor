@@ -89,7 +89,7 @@ Sandshrew
 #org @NAME_SANDSLASH
 Sandslash
 
-#org @NAME_NIDORANF
+#org @NAME_NIDORAN_F
 Nidoran[B6]
 
 #org @NAME_NIDORINA
@@ -98,7 +98,7 @@ Nidorina
 #org @NAME_NIDOQUEEN
 Nidoqueen
 
-#org @NAME_NIDORANM
+#org @NAME_NIDORAN_M
 Nidoran[B5]
 
 #org @NAME_NIDORINO
