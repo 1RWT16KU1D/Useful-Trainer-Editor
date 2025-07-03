@@ -4,20 +4,20 @@ from PIL import Image, ImageTk
 import os, re
 
 # Mapping for trainer name decoding
-_CHAR_MAP = {f"_{c}": c for c in "ABCDEFGHIJKLMNOPQRSTUVWXYZ"}
-_CHAR_MAP.update({f"_{c.lower()}": c.lower() for c in "ABCDEFGHIJKLMNOPQRSTUVWXYZ"})
-_CHAR_MAP.update({f"_{d}": d for d in "0123456789"})
-_CHAR_MAP.update({
+charMap = {f"_{c}": c for c in "ABCDEFGHIJKLMNOPQRSTUVWXYZ"}
+charMap.update({f"_{c.lower()}": c.lower() for c in "ABCDEFGHIJKLMNOPQRSTUVWXYZ"})
+charMap.update({f"_{d}": d for d in "0123456789"})
+charMap.update({
     "_SPACE": " ",
     "_AMPERSAND": "&",
     "_PERIOD": ".",
 })
 
 # Reverse map used for encoding trainer names back to token strings
-_REVERSE_CHAR_MAP = {v: k for k, v in _CHAR_MAP.items()}
+reverseCharMap = {v: k for k, v in charMap.items()}
 
-def parse_item_ids(path: str):
-    """Extract unique ITEM_* identifiers from the reference file."""
+def parseItemIds(path: str):
+    # Extract unique ITEM_* identifiers from the reference file.
     pattern = re.compile(r'\.itemId\s*=\s*(ITEM_[A-Z0-9_]+)')
     items = []
     seen = set()
@@ -31,12 +31,12 @@ def parse_item_ids(path: str):
                     items.append(item)
     return items
 
-def item_display_name(item_id: str) -> str:
-    """Convert an ITEM_* identifier into a user friendly name."""
+def itemDisplayName(item_id: str) -> str:
+    # Convert an ITEM_* identifier into a user friendly name.
     return item_id.replace('ITEM_', '').replace('_', ' ').title()
 
-def parse_trainer_parties(path: str):
-    """Parse trainer parties and return mapping of party name to mons."""
+def parseTrainerParties(path: str):
+    # Parse trainer parties and return mapping of party name to mons.
     with open(path, encoding='utf-8', errors='ignore') as f:
         text = f.read()
 
@@ -64,8 +64,8 @@ def parse_trainer_parties(path: str):
             ]
     return parties
 
-def rewrite_trainer_party(path: str, party_name: str, mons: list) -> None:
-    """Rewrite a trainer party definition."""
+def rewriteTrainerParty(path: str, party_name: str, mons: list) -> None:
+    # Rewrite a trainer party definition.
     pattern_start = re.compile(r'struct\s+\w+\s+' + re.escape(party_name) + r'\[\]\s*=\s*\{')
     with open(path, encoding='utf-8', errors='ignore') as f:
         lines = f.readlines()
@@ -97,8 +97,8 @@ def rewrite_trainer_party(path: str, party_name: str, mons: list) -> None:
     with open(path, 'w', encoding='utf-8', errors='ignore') as f:
         f.writelines(lines)
 
-def parse_pokemon_names(path: str) -> dict:
-    """Parse the DPE Pokemon name table and return mapping of species id to name."""
+def parsePokemonNames(path: str) -> dict:
+    # Parse the DPE Pokemon name table and return mapping of species id to name.
     names = {}
     with open(path, encoding='utf-8', errors='ignore') as f:
         lines = [l.strip() for l in f]
@@ -117,28 +117,28 @@ def parse_pokemon_names(path: str) -> dict:
         i += 1
     return names
 
-def encode_trainer_name(name: str) -> str:
-    """Encode a string into a comma-separated list of tokens."""
+def encodeTrainerName(name: str) -> str:
+    # Encode a string into a comma-separated list of tokens.
     tokens = []
     for ch in name:
-        if ch not in _REVERSE_CHAR_MAP:
+        if ch not in reverseCharMap:
             raise ValueError(f"Invalid character: {ch}")
-        tokens.append(_REVERSE_CHAR_MAP[ch])
+        tokens.append(reverseCharMap[ch])
     tokens.append("_END")
     return ", ".join(tokens)
 
-def decode_trainer_name(token_str: str) -> str:
-    """Decode a comma-separated list of name tokens into a string."""
+def decodeTrainerName(tokenStr: str) -> str:
+    # Decode a comma-separated list of name tokens into a string.
     name = []
-    for token in token_str.split(','):
+    for token in tokenStr.split(','):
         t = token.strip()
         if not t or t == '_END':
             break
-        name.append(_CHAR_MAP.get(t, ''))
+        name.append(charMap.get(t, ''))
     return ''.join(name)
 
-def parse_trainer_data(path: str):
-    """Parse the trainer data file and return list of dictionaries."""
+def parseTrainerData(path: str):
+    # Parse the trainer data file and return list of dictionaries.
     trainers = []
     current_id = None
     current = None
@@ -193,7 +193,7 @@ def parse_trainer_data(path: str):
 
         m = pattern_name.search(line)
         if m:
-            current['name'] = decode_trainer_name(m.group(1))
+            current['name'] = decodeTrainerName(m.group(1))
             continue
         m = pattern_gender.search(line)
         if m:
@@ -219,8 +219,8 @@ def parse_trainer_data(path: str):
         trainers.append(current)
     return trainers
 
-def rewrite_trainer_name(path: str, trainer_id: str, token_str: str) -> None:
-    """Rewrite the trainerName entry for a given trainer id in the file."""
+def rewriteTrainerName(path: str, trainer_id: str, tokenStr: str) -> None:
+    # Rewrite the trainerName entry for a given trainer id in the file.
     pattern_id = re.compile(rf"\[{re.escape(trainer_id)}\]\s*=\s*\{{")
     pattern_name = re.compile(r'(\.trainerName\s*=\s*\{)([^}]*)(\})')
     with open(path, encoding='utf-8', errors='ignore') as f:
@@ -233,15 +233,15 @@ def rewrite_trainer_name(path: str, trainer_id: str, token_str: str) -> None:
         else:
             m = pattern_name.search(line)
             if m:
-                lines[i] = pattern_name.sub(rf"\1 {token_str} \3", line)
+                lines[i] = pattern_name.sub(rf"\1 {tokenStr} \3", line)
                 break
     with open(path, 'w', encoding='utf-8', errors='ignore') as f:
         f.writelines(lines)
 
-def rewrite_trainer_options(path: str, trainer_id: str, gender: str,
-                            double: bool, party_flags: str, items: list) -> None:
-    """Rewrite various trainer options for a given trainer id."""
-    pattern_id = re.compile(rf"\[{re.escape(trainer_id)}\]\s*=\s*\{{")
+def rewriteTrainerOptions(path: str, trainerId: str, gender: str,
+                          double: bool, partyFlags: str, items: list) -> None:
+    # Rewrite various trainer options for a given trainer id.
+    pattern_id = re.compile(rf"\[{re.escape(trainerId)}\]\s*=\s*\{{")
     pattern_gender = re.compile(r'(\.gender\s*=\s*)(GENDER_[A-Z]+)(,?)')
     pattern_double = re.compile(r'(\.doubleBattle\s*=\s*)(TRUE|FALSE)(,?)')
     pattern_partyflags = re.compile(r'(\.partyFlags\s*=\s*)([^,]+)(,?)')
@@ -267,7 +267,7 @@ def rewrite_trainer_options(path: str, trainer_id: str, gender: str,
                 continue
             m = pattern_partyflags.search(line)
             if m:
-                lines[i] = pattern_partyflags.sub(rf"\1{party_flags}\3", line)
+                lines[i] = pattern_partyflags.sub(rf"\1{partyFlags}\3", line)
                 continue
             m = pattern_items.search(line)
             if m:
@@ -298,8 +298,8 @@ class TrainerEditor(tk.Tk):
         self.resizable(False, False)
 
         ref = os.path.join(os.path.dirname(__file__), "item_tables_reference.txt")
-        self.item_ids = parse_item_ids(ref) if os.path.exists(ref) else ["ITEM_NONE"]
-        self.item_names = [item_display_name(i) for i in self.item_ids]
+        self.item_ids = parseItemIds(ref) if os.path.exists(ref) else ["ITEM_NONE"]
+        self.item_names = [itemDisplayName(i) for i in self.item_ids]
         self.id_from_name = dict(zip(self.item_names, self.item_ids))
         self.name_from_id = dict(zip(self.item_ids, self.item_names))
 
@@ -310,14 +310,14 @@ class TrainerEditor(tk.Tk):
         self.name_from_species = {}
         self.species_from_name = {}
         self.current_trainer_index = None
-        self._create_menu()
-        self._create_panes()
-        self._create_widgets()
-        self._center_window()
-        self.after(100, self.startup_folders)
+        self.createMenu()
+        self.createPanes()
+        self.createWidgets()
+        self.centerWindow()
+        self.after(100, self.startupFolders)
 
-    def _center_window(self):
-        """Center the window on the user's screen."""
+    def centerWindow(self):
+        # Center the window on the user's screen.
         self.update_idletasks()
         width = self.winfo_width()
         height = self.winfo_height()
@@ -325,16 +325,16 @@ class TrainerEditor(tk.Tk):
         y = (self.winfo_screenheight() // 2) - (height // 2)
         self.geometry(f"{width}x{height}+{x}+{y}")
 
-    def startup_folders(self):
-        """Prompt the user to select CFRU and DPE folders when launching."""
-        self.open_cfru_folder()
-        self.open_dpe_folder()
+    def startupFolders(self):
+        # Prompt the user to select CFRU and DPE folders when launching.
+        self.openCfruFolder()
+        self.openDpeFolder()
 
-    def _create_menu(self):
+    def createMenu(self):
         menubar = tk.Menu(self)
         fileMenu = tk.Menu(menubar, tearoff=0)
-        fileMenu.add_command(label="Open CFRU Folder", command=self.open_cfru_folder)
-        fileMenu.add_command(label="Open DPE Folder", command=self.open_dpe_folder)
+        fileMenu.add_command(label="Open CFRU Folder", command=self.openCfruFolder)
+        fileMenu.add_command(label="Open DPE Folder", command=self.openDpeFolder)
         fileMenu.add_separator()
         fileMenu.add_command(label="Exit", command=self.quit)
         menubar.add_cascade(label="File", menu=fileMenu)
@@ -348,7 +348,7 @@ class TrainerEditor(tk.Tk):
         menubar.add_cascade(label="Help", menu=helpMenu)
         self.config(menu=menubar)
 
-    def _create_panes(self):
+    def createPanes(self):
         # Use tk.PanedWindow to allow sashwidth
         self.panes = tk.PanedWindow(self, orient=tk.HORIZONTAL, sashwidth=0)
         self.panes.pack(fill=tk.BOTH, expand=True)
@@ -381,7 +381,7 @@ class TrainerEditor(tk.Tk):
         self.frameRight.grid_columnconfigure(1, weight=1)
         self.frameRight.grid_rowconfigure(2, weight=1)
 
-    def _create_widgets(self):
+    def createWidgets(self):
         # DETAIL PANES: Use labelframes for each section
         # Basics
         self.frameBasics = ttk.LabelFrame(self.frameRight, text="Basics")
@@ -391,7 +391,7 @@ class TrainerEditor(tk.Tk):
         self.lblSprite.grid(row=0, column=1)
         ttk.Label(self.frameBasics, text="Name:").grid(row=1, column=0, sticky="w")
         self.entryName = ttk.Entry(self.frameBasics)
-        self.entryName.bind("<FocusOut>", self._on_name_focus_out)
+        self.entryName.bind("<FocusOut>", self.onNameFocusOut)
         self.entryName.grid(row=1, column=1, columnspan=2, sticky="we")
         ttk.Label(self.frameBasics, text="Gender:").grid(row=2, column=0, sticky="w")
         self.genderVar = tk.StringVar()
@@ -468,7 +468,7 @@ class TrainerEditor(tk.Tk):
             combo.grid(row=4 + i//2, column=1 + i%2)
 
         # Single save button for all edits
-        self.btnSaveAll = ttk.Button(self.frameRight, text="Save", command=self.save_all)
+        self.btnSaveAll = ttk.Button(self.frameRight, text="Save", command=self.saveAll)
         self.btnSaveAll.grid(row=3, column=1, sticky="e", padx=10, pady=(0,5))
 
     def on_select_trainer(self, event):
@@ -510,12 +510,12 @@ class TrainerEditor(tk.Tk):
         if sel:
             self.partyTree.delete(sel[0])
 
-    def save_trainer_name(self):
+    def saveTrainerName(self):
         if self.current_trainer_index is None:
             return
         new_name = self.entryName.get()
         try:
-            encoded = encode_trainer_name(new_name)
+            encoded = encodeTrainerName(new_name)
         except ValueError as e:
             messagebox.showerror("Invalid Name", str(e))
             return
@@ -529,9 +529,9 @@ class TrainerEditor(tk.Tk):
 
         if self.cfruFolder:
             path = os.path.join(self.cfruFolder, defaultRelativePath)
-            rewrite_trainer_name(path, tid, encoded)
+            rewriteTrainerName(path, tid, encoded)
 
-    def save_options(self):
+    def saveOptions(self):
         if self.current_trainer_index is None:
             return
         data = self.trainer_data[self.current_trainer_index]
@@ -547,9 +547,9 @@ class TrainerEditor(tk.Tk):
 
         if self.cfruFolder:
             path = os.path.join(self.cfruFolder, defaultRelativePath)
-            rewrite_trainer_options(path, data['id'], data['gender'], data['double'], data['partyFlags'], data['items'])
+            rewriteTrainerOptions(path, data['id'], data['gender'], data['double'], data['partyFlags'], data['items'])
 
-    def save_party(self):
+    def saveParty(self):
         if self.current_trainer_index is None:
             return
         data = self.trainer_data[self.current_trainer_index]
@@ -564,25 +564,25 @@ class TrainerEditor(tk.Tk):
         self.parties[party_name] = mons
         if self.cfruFolder:
             path = os.path.join(self.cfruFolder, partyRelativePath)
-            rewrite_trainer_party(path, party_name, mons)
+            rewriteTrainerParty(path, party_name, mons)
 
-    def save_all(self):
-        """Save name and option edits."""
-        self.save_trainer_name()
-        self.save_options()
-        self.save_party()
+    def saveAll(self):
+        # Save name and option edits.
+        self.saveTrainerName()
+        self.saveOptions()
+        self.saveParty()
 
     # === Placeholder command methods ===
-    def open_cfru_folder(self):
-        """Prompt the user to select the base CFRU folder and load files."""
-        self.select_cfru_folder()
+    def openCfruFolder(self):
+        # Prompt the user to select the base CFRU folder and load files.
+        self.selectCfruFolder()
 
-    def open_dpe_folder(self):
-        """Prompt the user to select the DPE folder and load name data."""
-        self.select_dpe_folder()
+    def openDpeFolder(self):
+        # Prompt the user to select the DPE folder and load name data.
+        self.selectDpeFolder()
 
-    def select_cfru_folder(self):
-        """Open a folder selection dialog and validate required files."""
+    def selectCfruFolder(self):
+        # Open a folder selection dialog and validate required files.
         folder = filedialog.askdirectory(title="Select CFRU folder")
         if not folder:
             return
@@ -603,27 +603,27 @@ class TrainerEditor(tk.Tk):
             return
 
         self.cfruFolder = folder
-        self.parties = parse_trainer_parties(trainer_parties_path)
+        self.parties = parseTrainerParties(trainer_parties_path)
         species = {mon['species'] for mons in self.parties.values() for mon in mons}
         self.species_names = sorted(species)
-        self.update_species_box()
+        self.updateSpeciesBox()
         self.comboHeld['values'] = self.item_names
-        self.load_trainer_data(trainer_data_path)
+        self.loadTrainerData(trainer_data_path)
         messagebox.showinfo(
             "Success",
             f"Loaded {len(self.trainer_data)} trainers from {folder}!"
         )
 
-    def update_species_box(self):
-        """Update species combobox options based on loaded names."""
+    def updateSpeciesBox(self):
+        # Update species combobox options based on loaded names.
         if self.species_name_map:
             names = [self.species_name_map.get(s, s) for s in self.species_names]
             self.comboSpecies['values'] = names
         else:
             self.comboSpecies['values'] = self.species_names
 
-    def select_dpe_folder(self):
-        """Open a folder selection dialog for the DPE folder."""
+    def selectDpeFolder(self):
+        # Open a folder selection dialog for the DPE folder.
         folder = filedialog.askdirectory(title="Select DPE folder")
         if not folder:
             return
@@ -637,17 +637,17 @@ class TrainerEditor(tk.Tk):
             return
 
         self.dpeFolder = folder
-        self.species_name_map = parse_pokemon_names(name_path)
+        self.species_name_map = parsePokemonNames(name_path)
         self.name_from_species = self.species_name_map
         self.species_from_name = {v: k for k, v in self.species_name_map.items()}
-        self.update_species_box()
+        self.updateSpeciesBox()
 
-    def load_trainer_data(self, path: str):
-        """Parse trainer data file and populate the tree view."""
+    def loadTrainerData(self, path: str):
+        # Parse trainer data file and populate the tree view.
         self.trainer_data.clear()
         self.trainerList.delete(*self.trainerList.get_children())
         try:
-            trainers = parse_trainer_data(path)
+            trainers = parseTrainerData(path)
         except Exception as e:
             messagebox.showerror("Parse Error", f"Failed to parse trainer data:\n{e}")
             return
@@ -660,7 +660,7 @@ class TrainerEditor(tk.Tk):
     def randomize(self):
         messagebox.showinfo("Randomize", "Party randomized!")
 
-    def _on_name_focus_out(self, event):
+    def onNameFocusOut(self, event):
         name = self.entryName.get()
         if len(name) > self.MAX_NAME_LEN:
             truncated = name[:self.MAX_NAME_LEN]
