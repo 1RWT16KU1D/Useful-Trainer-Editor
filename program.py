@@ -16,6 +16,25 @@ _CHAR_MAP.update({
 # Reverse map used for encoding trainer names back to token strings
 _REVERSE_CHAR_MAP = {v: k for k, v in _CHAR_MAP.items()}
 
+def parse_item_ids(path: str):
+    """Extract unique ITEM_* identifiers from the reference file."""
+    pattern = re.compile(r'\.itemId\s*=\s*(ITEM_[A-Z0-9_]+)')
+    items = []
+    seen = set()
+    with open(path, encoding='utf-8', errors='ignore') as f:
+        for line in f:
+            m = pattern.search(line)
+            if m:
+                item = m.group(1)
+                if item not in seen:
+                    seen.add(item)
+                    items.append(item)
+    return items
+
+def item_display_name(item_id: str) -> str:
+    """Convert an ITEM_* identifier into a user friendly name."""
+    return item_id.replace('ITEM_', '').replace('_', ' ').title()
+
 def encode_trainer_name(name: str) -> str:
     """Encode a string into a comma-separated list of tokens."""
     tokens = []
@@ -162,6 +181,13 @@ class TrainerEditor(tk.Tk):
         self.title("Useful Trainer Editor")
         self.geometry("800x600")
         self.resizable(False, False)
+
+        ref = os.path.join(os.path.dirname(__file__), "item_tables_reference.txt")
+        self.item_ids = parse_item_ids(ref) if os.path.exists(ref) else ["ITEM_NONE"]
+        self.item_names = [item_display_name(i) for i in self.item_ids]
+        self.id_from_name = dict(zip(self.item_names, self.item_ids))
+        self.name_from_id = dict(zip(self.item_ids, self.item_names))
+
         self.trainer_data = []
         self.current_trainer_index = None
         self._create_menu()
@@ -229,9 +255,7 @@ class TrainerEditor(tk.Tk):
         ttk.Label(self.frameBasics, text="Name:").grid(row=1, column=0, sticky="w")
         self.entryName = ttk.Entry(self.frameBasics)
         self.entryName.bind("<FocusOut>", self._on_name_focus_out)
-        self.entryName.grid(row=1, column=1)
-        btnSave = ttk.Button(self.frameBasics, text="Save", command=self.save_trainer_name)
-        btnSave.grid(row=1, column=2, padx=(5,0))
+        self.entryName.grid(row=1, column=1, columnspan=2, sticky="we")
         ttk.Label(self.frameBasics, text="Gender:").grid(row=2, column=0, sticky="w")
         self.genderVar = tk.StringVar()
         ttk.Radiobutton(self.frameBasics, text="Male", variable=self.genderVar, value="M").grid(row=2, column=1)
@@ -258,7 +282,7 @@ class TrainerEditor(tk.Tk):
         for i in range(4):
             ttk.Label(self.frameItems, text=f"Item {i+1}:").grid(row=i, column=0, sticky="w")
             var = tk.StringVar()
-            combo = ttk.Combobox(self.frameItems, textvariable=var, values=["ITEM_NONE", "ITEM_POTION", "..."])
+            combo = ttk.Combobox(self.frameItems, textvariable=var, values=self.item_names, state="readonly")
             combo.grid(row=i, column=1)
             self.itemVars.append(var)
 
@@ -280,8 +304,6 @@ class TrainerEditor(tk.Tk):
         self.customMoveVar = tk.BooleanVar()
         self.chkCustomMoves = ttk.Checkbutton(self.frameOptions, text="Custom Movesets", variable=self.customMoveVar)
         self.chkCustomMoves.grid(row=2, column=2)
-        btnSaveOpt = ttk.Button(self.frameOptions, text="Save", command=self.save_options)
-        btnSaveOpt.grid(row=3, column=2, pady=(5,0))
 
         # Party
         self.frameParty = ttk.LabelFrame(self.frameRight, text="Party")
@@ -311,6 +333,10 @@ class TrainerEditor(tk.Tk):
             combo = ttk.Combobox(self.frameParty, values=["MOVE_TACKLE", "..."])
             combo.grid(row=4 + i//2, column=1 + i%2)
 
+        # Single save button for all edits
+        self.btnSaveAll = ttk.Button(self.frameRight, text="Save", command=self.save_all)
+        self.btnSaveAll.grid(row=3, column=1, sticky="e", padx=10, pady=(0,5))
+
     def on_select_trainer(self, event):
         sel = self.trainerList.selection()
         if not sel:
@@ -326,8 +352,11 @@ class TrainerEditor(tk.Tk):
         flags = data.get('partyFlags', '0')
         self.customItemVar.set('PARTY_FLAG_HAS_ITEM' in flags)
         self.customMoveVar.set('PARTY_FLAG_CUSTOM_MOVES' in flags)
-        for var, item in zip(self.itemVars, data.get('items', [])):
-            var.set(item)
+        items = data.get('items', [])
+        for var, item in zip(self.itemVars, items):
+            var.set(self.name_from_id.get(item, item))
+        for var in self.itemVars[len(items):]:
+            var.set(self.name_from_id.get('ITEM_NONE', 'None'))
 
     def save_trainer_name(self):
         if self.current_trainer_index is None:
@@ -362,11 +391,16 @@ class TrainerEditor(tk.Tk):
         if self.customMoveVar.get():
             flags.append('PARTY_FLAG_CUSTOM_MOVES')
         data['partyFlags'] = ' | '.join(flags) if flags else '0'
-        data['items'] = [var.get() for var in self.itemVars]
+        data['items'] = [self.id_from_name.get(var.get(), 'ITEM_NONE') for var in self.itemVars]
 
         if hasattr(self, 'selectedFolder'):
             path = os.path.join(self.selectedFolder, defaultRelativePath)
             rewrite_trainer_options(path, data['id'], data['gender'], data['double'], data['partyFlags'], data['items'])
+
+    def save_all(self):
+        """Save name and option edits."""
+        self.save_trainer_name()
+        self.save_options()
 
     # === Placeholder command methods ===
     def open_folder(self):
