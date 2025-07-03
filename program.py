@@ -69,37 +69,64 @@ def parse_trainer_data(path: str):
     pattern_partyflags = re.compile(r'\.partyFlags\s*=\s*([^,]+)')
 
     with open(path, encoding='utf-8', errors='ignore') as f:
-        for line in f:
-            m = pattern_id.search(line)
-            if m:
-                if current:
-                    trainers.append(current)
-                current_id = m.group(1).strip()
-                current = {'id': current_id}
-                continue
+        lines = f.readlines()
 
-            if current_id:
-                if line.strip().startswith('},'):
-                    trainers.append(current)
-                    current_id = None
-                    current = None
-                    continue
+    use_decap = any('#define DECAP_TRAINER_NAMES' in l for l in lines)
 
-                m = pattern_name.search(line)
-                if m:
-                    current['name'] = decode_trainer_name(m.group(1))
-                m = pattern_gender.search(line)
-                if m:
-                    current['gender'] = m.group(1)
-                m = pattern_items.search(line)
-                if m:
-                    current['items'] = [x.strip() for x in m.group(1).split(',')]
-                m = pattern_double.search(line)
-                if m:
-                    current['double'] = (m.group(1) == 'TRUE')
-                m = pattern_partyflags.search(line)
-                if m:
-                    current['partyFlags'] = m.group(1).strip()
+    in_decap_block = False
+    active = True
+
+    for line in lines:
+        stripped = line.strip()
+
+        if stripped.startswith('#ifdef DECAP_TRAINER_NAMES'):
+            in_decap_block = True
+            active = use_decap
+            continue
+        if stripped.startswith('#else') and in_decap_block:
+            active = not use_decap
+            continue
+        if stripped.startswith('#endif') and in_decap_block:
+            in_decap_block = False
+            active = True
+            continue
+
+        m = pattern_id.search(line)
+        if m:
+            if current:
+                trainers.append(current)
+            current_id = m.group(1).strip()
+            current = {'id': current_id}
+            continue
+
+        if not active or not current_id:
+            continue
+
+        if stripped.startswith('},'):
+            trainers.append(current)
+            current_id = None
+            current = None
+            continue
+
+        m = pattern_name.search(line)
+        if m:
+            current['name'] = decode_trainer_name(m.group(1))
+            continue
+        m = pattern_gender.search(line)
+        if m:
+            current['gender'] = m.group(1)
+            continue
+        m = pattern_items.search(line)
+        if m:
+            current['items'] = [x.strip() for x in m.group(1).split(',')]
+            continue
+        m = pattern_double.search(line)
+        if m:
+            current['double'] = (m.group(1) == 'TRUE')
+            continue
+        m = pattern_partyflags.search(line)
+        if m:
+            current['partyFlags'] = m.group(1).strip()
 
     if current:
         trainers.append(current)
