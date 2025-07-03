@@ -37,23 +37,53 @@ def decode_trainer_name(token_str: str) -> str:
     return ''.join(name)
 
 def parse_trainer_data(path: str):
-    """Return list of (trainer_id, trainer_name) from the given file."""
+    """Parse the trainer data file and return list of dictionaries."""
     trainers = []
     current_id = None
+    current = None
+
     pattern_id = re.compile(r'\[(.+?)\]\s*=\s*\{')
     pattern_name = re.compile(r'\.trainerName\s*=\s*\{([^}]*)\}')
+    pattern_gender = re.compile(r'\.gender\s*=\s*(GENDER_[A-Z]+)')
+    pattern_items = re.compile(r'\.items\s*=\s*\{([^}]*)\}')
+    pattern_double = re.compile(r'\.doubleBattle\s*=\s*(TRUE|FALSE)')
+    pattern_partyflags = re.compile(r'\.partyFlags\s*=\s*([^,]+)')
+
     with open(path, encoding='utf-8', errors='ignore') as f:
         for line in f:
             m = pattern_id.search(line)
             if m:
+                if current:
+                    trainers.append(current)
                 current_id = m.group(1).strip()
+                current = {'id': current_id}
                 continue
+
             if current_id:
+                if line.strip().startswith('},'):
+                    trainers.append(current)
+                    current_id = None
+                    current = None
+                    continue
+
                 m = pattern_name.search(line)
                 if m:
-                    name = decode_trainer_name(m.group(1))
-                    trainers.append((current_id, name))
-                    current_id = None
+                    current['name'] = decode_trainer_name(m.group(1))
+                m = pattern_gender.search(line)
+                if m:
+                    current['gender'] = m.group(1)
+                m = pattern_items.search(line)
+                if m:
+                    current['items'] = [x.strip() for x in m.group(1).split(',')]
+                m = pattern_double.search(line)
+                if m:
+                    current['double'] = (m.group(1) == 'TRUE')
+                m = pattern_partyflags.search(line)
+                if m:
+                    current['partyFlags'] = m.group(1).strip()
+
+    if current:
+        trainers.append(current)
     return trainers
 
 def rewrite_trainer_name(path: str, trainer_id: str, token_str: str) -> None:
@@ -72,6 +102,48 @@ def rewrite_trainer_name(path: str, trainer_id: str, token_str: str) -> None:
             if m:
                 lines[i] = pattern_name.sub(rf"\1 {token_str} \3", line)
                 break
+    with open(path, 'w', encoding='utf-8', errors='ignore') as f:
+        f.writelines(lines)
+
+def rewrite_trainer_options(path: str, trainer_id: str, gender: str,
+                            double: bool, party_flags: str, items: list) -> None:
+    """Rewrite various trainer options for a given trainer id."""
+    pattern_id = re.compile(rf"\[{re.escape(trainer_id)}\]\s*=\s*\{{")
+    pattern_gender = re.compile(r'(\.gender\s*=\s*)(GENDER_[A-Z]+)(,?)')
+    pattern_double = re.compile(r'(\.doubleBattle\s*=\s*)(TRUE|FALSE)(,?)')
+    pattern_partyflags = re.compile(r'(\.partyFlags\s*=\s*)([^,]+)(,?)')
+    pattern_items = re.compile(r'(\.items\s*=\s*\{)([^}]*)(\})')
+
+    with open(path, encoding='utf-8', errors='ignore') as f:
+        lines = f.readlines()
+
+    inside = False
+    for i, line in enumerate(lines):
+        if not inside:
+            if pattern_id.search(line):
+                inside = True
+        else:
+            m = pattern_gender.search(line)
+            if m:
+                lines[i] = pattern_gender.sub(rf"\1{gender}\3", line)
+                continue
+            m = pattern_double.search(line)
+            if m:
+                val = 'TRUE' if double else 'FALSE'
+                lines[i] = pattern_double.sub(rf"\1{val}\3", line)
+                continue
+            m = pattern_partyflags.search(line)
+            if m:
+                lines[i] = pattern_partyflags.sub(rf"\1{party_flags}\3", line)
+                continue
+            m = pattern_items.search(line)
+            if m:
+                items_str = ', '.join(items)
+                lines[i] = pattern_items.sub(rf"\1{items_str}\3", line)
+                continue
+            if line.strip().startswith('},'):
+                break
+
     with open(path, 'w', encoding='utf-8', errors='ignore') as f:
         f.writelines(lines)
 
@@ -196,15 +268,20 @@ class TrainerEditor(tk.Tk):
         ttk.Label(self.frameOptions, text="Music ID:").grid(row=0, column=0)
         self.spinMusic = tk.Spinbox(self.frameOptions, from_=0, to=255, width=5)
         self.spinMusic.grid(row=0, column=1)
-        self.chkDouble = ttk.Checkbutton(self.frameOptions, text="Double Battle")
+        self.doubleVar = tk.BooleanVar()
+        self.chkDouble = ttk.Checkbutton(self.frameOptions, text="Double Battle", variable=self.doubleVar)
         self.chkDouble.grid(row=0, column=2)
         ttk.Label(self.frameOptions, text="AI Flags:").grid(row=1, column=0)
         self.spinAI = tk.Spinbox(self.frameOptions, from_=0, to=255, width=5)
         self.spinAI.grid(row=1, column=1)
-        self.chkCustomItems = ttk.Checkbutton(self.frameOptions, text="Custom Held Items")
+        self.customItemVar = tk.BooleanVar()
+        self.chkCustomItems = ttk.Checkbutton(self.frameOptions, text="Custom Held Items", variable=self.customItemVar)
         self.chkCustomItems.grid(row=1, column=2)
-        self.chkCustomMoves = ttk.Checkbutton(self.frameOptions, text="Custom Movesets")
+        self.customMoveVar = tk.BooleanVar()
+        self.chkCustomMoves = ttk.Checkbutton(self.frameOptions, text="Custom Movesets", variable=self.customMoveVar)
         self.chkCustomMoves.grid(row=2, column=2)
+        btnSaveOpt = ttk.Button(self.frameOptions, text="Save", command=self.save_options)
+        btnSaveOpt.grid(row=3, column=2, pady=(5,0))
 
         # Party
         self.frameParty = ttk.LabelFrame(self.frameRight, text="Party")
@@ -240,9 +317,17 @@ class TrainerEditor(tk.Tk):
             return
         idx = self.trainerList.index(sel[0])
         self.current_trainer_index = idx
-        tid, name = self.trainer_data[idx]
+        data = self.trainer_data[idx]
         self.entryName.delete(0, tk.END)
-        self.entryName.insert(0, name)
+        self.entryName.insert(0, data.get('name', ''))
+        gender = data.get('gender', 'GENDER_MALE')
+        self.genderVar.set('M' if gender == 'GENDER_MALE' else 'F')
+        self.doubleVar.set(data.get('double', False))
+        flags = data.get('partyFlags', '0')
+        self.customItemVar.set('PARTY_FLAG_HAS_ITEM' in flags)
+        self.customMoveVar.set('PARTY_FLAG_CUSTOM_MOVES' in flags)
+        for var, item in zip(self.itemVars, data.get('items', [])):
+            var.set(item)
 
     def save_trainer_name(self):
         if self.current_trainer_index is None:
@@ -254,8 +339,9 @@ class TrainerEditor(tk.Tk):
             messagebox.showerror("Invalid Name", str(e))
             return
 
-        tid, _ = self.trainer_data[self.current_trainer_index]
-        self.trainer_data[self.current_trainer_index] = (tid, new_name)
+        data = self.trainer_data[self.current_trainer_index]
+        tid = data['id']
+        data['name'] = new_name
         display = new_name if new_name else "???"
         item_id = self.trainerList.get_children()[self.current_trainer_index]
         self.trainerList.item(item_id, values=(self.current_trainer_index, display))
@@ -263,6 +349,24 @@ class TrainerEditor(tk.Tk):
         if hasattr(self, 'selectedFolder'):
             path = os.path.join(self.selectedFolder, defaultRelativePath)
             rewrite_trainer_name(path, tid, encoded)
+
+    def save_options(self):
+        if self.current_trainer_index is None:
+            return
+        data = self.trainer_data[self.current_trainer_index]
+        data['gender'] = 'GENDER_MALE' if self.genderVar.get() == 'M' else 'GENDER_FEMALE'
+        data['double'] = self.doubleVar.get()
+        flags = []
+        if self.customItemVar.get():
+            flags.append('PARTY_FLAG_HAS_ITEM')
+        if self.customMoveVar.get():
+            flags.append('PARTY_FLAG_CUSTOM_MOVES')
+        data['partyFlags'] = ' | '.join(flags) if flags else '0'
+        data['items'] = [var.get() for var in self.itemVars]
+
+        if hasattr(self, 'selectedFolder'):
+            path = os.path.join(self.selectedFolder, defaultRelativePath)
+            rewrite_trainer_options(path, data['id'], data['gender'], data['double'], data['partyFlags'], data['items'])
 
     # === Placeholder command methods ===
     def open_folder(self):
@@ -300,9 +404,9 @@ class TrainerEditor(tk.Tk):
             messagebox.showerror("Parse Error", f"Failed to parse trainer data:\n{e}")
             return
 
-        for idx, (tid, name) in enumerate(trainers):
-            self.trainer_data.append((tid, name))
-            display_name = name if name else "???"
+        for idx, data in enumerate(trainers):
+            self.trainer_data.append(data)
+            display_name = data.get('name', '') or "???"
             self.trainerList.insert("", "end", values=(idx, display_name))
 
     def randomize(self):
