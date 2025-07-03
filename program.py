@@ -1,152 +1,156 @@
 import tkinter as tk
-from tkinter import filedialog, messagebox
+from tkinter import filedialog, messagebox, ttk
 from PIL import Image, ImageTk
-import re
-import os
+import os, re
 
+# === Constants ===
 defaultRelativePath = "src/Tables/trainer_data.c"
 spriteFolder = "sprites/"
 
-gbaCharMap = {
-    "_A": "A", "_B": "B", "_C": "C", "_D": "D", "_E": "E", "_F": "F", "_G": "G", "_H": "H", "_I": "I", "_J": "J",
-    "_K": "K", "_L": "L", "_M": "M", "_N": "N", "_O": "O", "_P": "P", "_Q": "Q", "_R": "R", "_S": "S", "_T": "T",
-    "_U": "U", "_V": "V", "_W": "W", "_X": "X", "_Y": "Y", "_Z": "Z",
-    "_a": "a", "_b": "b", "_c": "c", "_d": "d", "_e": "e", "_f": "f", "_g": "g", "_h": "h", "_i": "i", "_j": "j",
-    "_k": "k", "_l": "l", "_m": "m", "_n": "n", "_o": "o", "_p": "p", "_q": "q", "_r": "r", "_s": "s", "_t": "t",
-    "_u": "u", "_v": "v", "_w": "w", "_x": "x", "_y": "y", "_z": "z",
-    "_0": "0", "_1": "1", "_2": "2", "_3": "3", "_4": "4", "_5": "5", "_6": "6", "_7": "7", "_8": "8", "_9": "9",
-    "_SPACE": " ", "_PERIOD": ".", "_EXCLAMATION": "!", "_QUESTION": "?", "_HYPHEN": "-", "_AMPERSAND": "&",
-    "_APOSTROPHE": "'", "_TIMES": "×", "_NEWLINE": "\n",
-    "_AT": "@", "_eACUTE": "é", "_PO": "PO", "_KE": "KE", "_BL": "BL", "_OC": "OC", "_OK": "OK",
-    "_END": ""
-}
-
-def decodeMacroName(charArray: str) -> str:
-    tokens = re.findall(r'_(\w+)', charArray)
-    return ''.join(gbaCharMap.get(f"_{token}", '?') for token in tokens)
-
-def parseTrainers(filePath):
-    """Parse trainer definitions from the given file."""
-    trainers = []
-    start_re = re.compile(r"\[(.+?)\]\s*=\s*\{")
-
-    with open(filePath, encoding="utf-8") as f:
-        lines = f.readlines()
-
-    collecting = False
-    brace_count = 0
-    body_lines = []
-    identifier = ""
-
-    for line in lines:
-        if not collecting:
-            match = start_re.search(line)
-            if match:
-                collecting = True
-                identifier = match.group(1)
-                brace_count = 1
-                body_lines = []
-                continue
-        else:
-            body_lines.append(line)
-            brace_count += line.count('{')
-            brace_count -= line.count('}')
-
-            if brace_count == 0:
-                body = ''.join(body_lines)
-
-                nameMatch = re.search(r'\.trainerName\s*=\s*\{([^}]+)\}', body)
-                classMatch = re.search(r'\.trainerClass\s*=\s*(\w+)', body)
-                spriteMatch = re.search(r'\.trainerPic\s*=\s*(\w+)', body)
-
-                trainerName = decodeMacroName(nameMatch.group(1)) if nameMatch else "Unknown"
-                
-                if trainerName == "":
-                    trainerName = "???"
-
-                trainers.append({
-                    "id": identifier.strip(),
-                    "name": trainerName,
-                    "class": classMatch.group(1) if classMatch else "???",
-                    "sprite": spriteMatch.group(1).lower() + ".png" if spriteMatch else None,
-                })
-
-                collecting = False
-                brace_count = 0
-                body_lines = []
-                identifier = ""
-
-    return trainers
-
-class TrainerApp(tk.Tk):
+# === Main Application Class ===
+class TrainerEditor(tk.Tk):
     def __init__(self):
         super().__init__()
-        self.title("Useful Trainer Editor")
-        self.geometry("550x450")
-        self.trainers = []
-        self.setupUI()
+        self.title("Hopeless Trainer Editor - CFRU Mod")
+        self.geometry("800x600")
+        self._create_menu()
+        self._create_panes()
+        self._create_widgets()
 
-    def setupUI(self):
-        topFrame = tk.Frame(self)
-        topFrame.pack(pady=10)
+    def _create_menu(self):
+        menubar = tk.Menu(self)
+        # File Menu
+        fileMenu = tk.Menu(menubar, tearoff=0)
+        fileMenu.add_command(label="Open CFRU Folder", command=self.open_folder)
+        fileMenu.add_separator()
+        fileMenu.add_command(label="Exit", command=self.quit)
+        menubar.add_cascade(label="File", menu=fileMenu)
+        # Trainer Menu
+        trainerMenu = tk.Menu(menubar, tearoff=0)
+        trainerMenu.add_command(label="Randomize", command=self.randomize)
+        menubar.add_cascade(label="Trainer", menu=trainerMenu)
+        # Settings Menu (placeholder)
+        settingsMenu = tk.Menu(menubar, tearoff=0)
+        menubar.add_cascade(label="Settings", menu=settingsMenu)
+        # Help Menu
+        helpMenu = tk.Menu(menubar, tearoff=0)
+        helpMenu.add_command(label="About")
+        menubar.add_cascade(label="Help", menu=helpMenu)
+        self.config(menu=menubar)
 
-        browseBtn = tk.Button(topFrame, text="Open CFRU Folder", command=self.selectFolder)
-        browseBtn.pack()
+    def _create_panes(self):
+        # Main horizontal paned window
+        self.panes = ttk.Panedwindow(self, orient=tk.HORIZONTAL)
+        self.panes.pack(fill=tk.BOTH, expand=True)
 
-        listFrame = tk.Frame(self)
-        listFrame.pack(side=tk.LEFT, fill=tk.Y, padx=10, pady=10)
+        # Left frame: Trainer list
+        self.frameLeft = tk.Frame(self.panes, width=200)
+        self.trainerList = ttk.Treeview(self.frameLeft, columns=("#","Name"), show="headings")
+        self.trainerList.heading("#", text="#")
+        self.trainerList.heading("Name", text="Trainer")
+        self.trainerList.pack(fill=tk.BOTH, expand=True)
+        self.panes.add(self.frameLeft, weight=1)
 
-        self.listBox = tk.Listbox(listFrame, width=50)
-        self.listBox.pack(side=tk.LEFT, fill=tk.Y)
-        self.listBox.bind("<<ListboxSelect>>", self.displayTrainer)
+        # Right frame: Details
+        self.frameRight = tk.Frame(self.panes)
+        self.panes.add(self.frameRight, weight=3)
 
-        self.scrollbar = tk.Scrollbar(listFrame, orient=tk.VERTICAL, command=self.listBox.yview)
-        self.scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
-        self.listBox.config(yscrollcommand=self.scrollbar.set)
+    def _create_widgets(self):
+        # DETAIL PANES: Use labelframes for each section
+        # Basics
+        self.frameBasics = ttk.LabelFrame(self.frameRight, text="Basics")
+        self.frameBasics.grid(row=0, column=0, padx=10, pady=5, sticky="nw")
+        ttk.Label(self.frameBasics, text="Sprite:").grid(row=0, column=0, sticky="w")
+        self.lblSprite = ttk.Label(self.frameBasics)
+        self.lblSprite.grid(row=0, column=1)
+        ttk.Label(self.frameBasics, text="Name:").grid(row=1, column=0, sticky="w")
+        self.entryName = ttk.Entry(self.frameBasics)
+        self.entryName.grid(row=1, column=1)
+        ttk.Label(self.frameBasics, text="Gender:").grid(row=2, column=0, sticky="w")
+        self.genderVar = tk.StringVar()
+        ttk.Radiobutton(self.frameBasics, text="Male", variable=self.genderVar, value="M").grid(row=2, column=1)
+        ttk.Radiobutton(self.frameBasics, text="Female", variable=self.genderVar, value="F").grid(row=2, column=2)
+        ttk.Label(self.frameBasics, text="# ID:").grid(row=3, column=0, sticky="w")
+        self.spinId = tk.Spinbox(self.frameBasics, from_=0, to=255, width=5)
+        self.spinId.grid(row=3, column=1)
 
-        self.infoLabel = tk.Label(self, text="No trainer loaded yet", font=("Arial", 12))
-        self.infoLabel.pack(pady=10)
+        # Class
+        self.frameClass = ttk.LabelFrame(self.frameRight, text="Class")
+        self.frameClass.grid(row=1, column=0, padx=10, pady=5, sticky="nw")
+        ttk.Label(self.frameClass, text="Class ID:").grid(row=0, column=0, sticky="w")
+        self.spinClassId = tk.Spinbox(self.frameClass, from_=0, to=255, width=5)
+        self.spinClassId.grid(row=0, column=1)
+        self.comboClass = ttk.Combobox(self.frameClass, values=["TRAINER_CLASS_YOUNGSTER", "TRAINER_CLASS_BUG_MANIAC", "..."])
+        self.comboClass.grid(row=0, column=2)
+        self.entryClassName = ttk.Entry(self.frameClass)
+        self.entryClassName.grid(row=1, column=0, columnspan=3, sticky="we")
 
-        self.imageLabel = tk.Label(self)
-        self.imageLabel.pack()
+        # Items
+        self.frameItems = ttk.LabelFrame(self.frameRight, text="Items")
+        self.frameItems.grid(row=0, column=1, padx=10, pady=5, sticky="nw")
+        self.itemVars = []
+        for i in range(4):
+            ttk.Label(self.frameItems, text=f"Item {i+1}:").grid(row=i, column=0, sticky="w")
+            var = tk.StringVar()
+            combo = ttk.Combobox(self.frameItems, textvariable=var, values=["ITEM_NONE", "ITEM_POTION", "..."])
+            combo.grid(row=i, column=1)
+            self.itemVars.append(var)
+
+        # Options
+        self.frameOptions = ttk.LabelFrame(self.frameRight, text="Options")
+        self.frameOptions.grid(row=1, column=1, padx=10, pady=5, sticky="nw")
+        ttk.Label(self.frameOptions, text="Music ID:").grid(row=0, column=0)
+        self.spinMusic = tk.Spinbox(self.frameOptions, from_=0, to=255, width=5)
+        self.spinMusic.grid(row=0, column=1)
+        self.chkDouble = ttk.Checkbutton(self.frameOptions, text="Double Battle")
+        self.chkDouble.grid(row=0, column=2)
+        ttk.Label(self.frameOptions, text="AI Flags:").grid(row=1, column=0)
+        self.spinAI = tk.Spinbox(self.frameOptions, from_=0, to=255, width=5)
+        self.spinAI.grid(row=1, column=1)
+        self.chkCustomItems = ttk.Checkbutton(self.frameOptions, text="Custom Held Items")
+        self.chkCustomItems.grid(row=1, column=2)
+        self.chkCustomMoves = ttk.Checkbutton(self.frameOptions, text="Custom Movesets")
+        self.chkCustomMoves.grid(row=2, column=2)
+
+        # Party
+        self.frameParty = ttk.LabelFrame(self.frameRight, text="Party")
+        self.frameParty.grid(row=2, column=0, columnspan=2, padx=10, pady=5, sticky="nw")
+        self.partyTree = ttk.Treeview(self.frameParty, columns=("Species","Level"), show="headings", height=5)
+        self.partyTree.heading("Species", text="Species")
+        self.partyTree.heading("Level", text="Level")
+        self.partyTree.grid(row=0, column=0, columnspan=4)
+        btnAdd = ttk.Button(self.frameParty, text="+ Add")
+        btnAdd.grid(row=1, column=0)
+        btnRemove = ttk.Button(self.frameParty, text="- Remove")
+        btnRemove.grid(row=1, column=1)
+        ttk.Label(self.frameParty, text="Species:").grid(row=2, column=0)
+        self.comboSpecies = ttk.Combobox(self.frameParty, values=["SPECIES_BULBASAUR", "..."])
+        self.comboSpecies.grid(row=2, column=1)
+        ttk.Label(self.frameParty, text="Level:").grid(row=2, column=2)
+        self.spinLevel = tk.Spinbox(self.frameParty, from_=1, to=100, width=5)
+        self.spinLevel.grid(row=2, column=3)
+        ttk.Label(self.frameParty, text="EVs:").grid(row=3, column=0)
+        self.spinEVs = tk.Spinbox(self.frameParty, from_=0, to=255, width=5)
+        self.spinEVs.grid(row=3, column=1)
+        ttk.Label(self.frameParty, text="Held Item:").grid(row=3, column=2)
+        self.comboHeld = ttk.Combobox(self.frameParty, values=["ITEM_NONE", "..."])
+        self.comboHeld.grid(row=3, column=3)
+        ttk.Label(self.frameParty, text="Attacks:").grid(row=4, column=0)
+        for i in range(4):
+            combo = ttk.Combobox(self.frameParty, values=["MOVE_TACKLE", "..."])
+            combo.grid(row=4 + i//2, column=1 + i%2)
+
+    # === Placeholder command methods ===
+    def open_folder(self):
+        self.selectFolder()
 
     def selectFolder(self):
-        folderPath = filedialog.askdirectory(title="Select your CFRU folder")
-        if not folderPath:
-            return
+        pass
 
-        trainerFile = os.path.join(folderPath, defaultRelativePath)
-        if not os.path.exists(trainerFile):
-            messagebox.showerror("Error", f"Trainer file not found:\n{trainerFile}")
-            return
+    def randomize(self):
+        messagebox.showinfo("Randomize", "Party randomized!")
 
-        self.trainers = parseTrainers(trainerFile)
-        self.listBox.delete(0, tk.END)
-
-        trainerCount = 0
-        for trainer in self.trainers:
-            self.listBox.insert(tk.END, f"{trainerCount} - {trainer['name']}")
-            trainerCount += 1
-
-        messagebox.showinfo("Success", f"Loaded {len(self.trainers)} trainers.")
-
-    def displayTrainer(self, event):
-        index = self.listBox.curselection()
-        if not index:
-            return
-
-        trainer = self.trainers[index[0]]
-        infoText = f"Trainer Name: {trainer['name']}\nClass: {trainer['class']}"
-        self.infoLabel.config(text=infoText)
-
-        spritePath = os.path.join(spriteFolder, trainer['sprite']) if trainer['sprite'] else None
-        if spritePath and os.path.exists(spritePath):
-            img = Image.open(spritePath).resize((96, 96))
-            self.spriteImg = ImageTk.PhotoImage(img)
-            self.imageLabel.config(image=self.spriteImg)
-        else:
-            self.imageLabel.config(image='')
-
-if __name__ == "__main__":
-    app = TrainerApp()
+# === Application Entry Point ===
+if __name__ == '__main__':
+    app = TrainerEditor()
     app.mainloop()
