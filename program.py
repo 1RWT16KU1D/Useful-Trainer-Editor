@@ -294,7 +294,7 @@ class TrainerEditor(tk.Tk):
         style = ttk.Style(self)
         style.configure("Treeview.Heading", padding=(5, 2))
         self.title("Useful Trainer Editor")
-        self.geometry("800x600")
+        self.geometry("800x650")
         self.resizable(False, False)
 
         ref = os.path.join(os.path.dirname(__file__), "item_tables_reference.txt")
@@ -442,30 +442,38 @@ class TrainerEditor(tk.Tk):
         # Party
         self.frameParty = ttk.LabelFrame(self.frameRight, text="Party")
         self.frameParty.grid(row=2, column=0, columnspan=2, padx=10, pady=5, sticky="nsew")
-        self.partyTree = ttk.Treeview(self.frameParty, columns=("Species","Level"), show="headings", height=5)
-        self.partyTree.heading("Species", text="Species")
-        self.partyTree.heading("Level", text="Level")
+        self.frameParty.grid_rowconfigure(1, weight=1)
+
+        self.partyTree = ttk.Treeview(self.frameParty, columns=("Species", "Level"), show="headings", height=6)
+        self.partyTree.heading("Species", text="Species", anchor="center")
+        self.partyTree.heading("Level", text="Level", anchor="center")
+        self.partyTree.column("Species", anchor="center")
+        self.partyTree.column("Level", anchor="center")
         self.partyTree.grid(row=0, column=0, columnspan=4)
+
         btnAdd = ttk.Button(self.frameParty, text="+ Add", command=self.add_party_mon)
-        btnAdd.grid(row=1, column=0)
+        btnAdd.grid(row=2, column=0)
         btnRemove = ttk.Button(self.frameParty, text="- Remove", command=self.remove_party_mon)
-        btnRemove.grid(row=1, column=1)
-        ttk.Label(self.frameParty, text="Species:").grid(row=2, column=0)
+        btnRemove.grid(row=2, column=1)
+
+        ttk.Label(self.frameParty, text="Species:").grid(row=3, column=0)
         self.comboSpecies = ttk.Combobox(self.frameParty, values=self.species_names, state="readonly")
-        self.comboSpecies.grid(row=2, column=1)
-        ttk.Label(self.frameParty, text="Level:").grid(row=2, column=2)
+        self.comboSpecies.grid(row=3, column=1)
+        ttk.Label(self.frameParty, text="Level:").grid(row=3, column=2)
         self.spinLevel = tk.Spinbox(self.frameParty, from_=1, to=100, width=5)
-        self.spinLevel.grid(row=2, column=3)
-        ttk.Label(self.frameParty, text="EVs:").grid(row=3, column=0)
+        self.spinLevel.grid(row=3, column=3)
+
+        ttk.Label(self.frameParty, text="EVs:").grid(row=4, column=0)
         self.spinEVs = tk.Spinbox(self.frameParty, from_=0, to=255, width=5)
-        self.spinEVs.grid(row=3, column=1)
-        ttk.Label(self.frameParty, text="Held Item:").grid(row=3, column=2)
+        self.spinEVs.grid(row=4, column=1)
+        ttk.Label(self.frameParty, text="Held Item:").grid(row=4, column=2)
         self.comboHeld = ttk.Combobox(self.frameParty, values=self.item_names, state="readonly")
-        self.comboHeld.grid(row=3, column=3)
-        ttk.Label(self.frameParty, text="Attacks:").grid(row=4, column=0)
+        self.comboHeld.grid(row=4, column=3)
+
+        ttk.Label(self.frameParty, text="Attacks:").grid(row=5, column=0)
         for i in range(4):
             combo = ttk.Combobox(self.frameParty, values=["MOVE_TACKLE", "..."])
-            combo.grid(row=4 + i//2, column=1 + i%2)
+            combo.grid(row=5 + i//2, column=1 + i%2)
 
         # Single save button for all edits
         self.btnSaveAll = ttk.Button(self.frameRight, text="Save", command=self.saveAll)
