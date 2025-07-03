@@ -81,6 +81,8 @@ spriteFolder = "sprites/"
 
 # === Main Application Class ===
 class TrainerEditor(tk.Tk):
+    MAX_NAME_LEN = 10
+
     def __init__(self):
         super().__init__()
         style = ttk.Style(self)
@@ -154,6 +156,7 @@ class TrainerEditor(tk.Tk):
         self.lblSprite.grid(row=0, column=1)
         ttk.Label(self.frameBasics, text="Name:").grid(row=1, column=0, sticky="w")
         self.entryName = ttk.Entry(self.frameBasics)
+        self.entryName.bind("<FocusOut>", self._on_name_focus_out)
         self.entryName.grid(row=1, column=1)
         btnSave = ttk.Button(self.frameBasics, text="Save", command=self.save_trainer_name)
         btnSave.grid(row=1, column=2, padx=(5,0))
@@ -283,8 +286,8 @@ class TrainerEditor(tk.Tk):
         self.selectedFolder = folder
         self.load_trainer_data(trainer_data_path)
         messagebox.showinfo(
-            "Folder Opened",
-            f"Loaded trainer data from:\n{trainer_data_path}"
+            "Success",
+            f"Loaded {len(self.trainer_data)} trainers from {folder}!"
         )
 
     def load_trainer_data(self, path: str):
@@ -304,6 +307,14 @@ class TrainerEditor(tk.Tk):
 
     def randomize(self):
         messagebox.showinfo("Randomize", "Party randomized!")
+
+    def _on_name_focus_out(self, event):
+        name = self.entryName.get()
+        if len(name) > self.MAX_NAME_LEN:
+            truncated = name[:self.MAX_NAME_LEN]
+            self.entryName.delete(0, tk.END)
+            self.entryName.insert(0, truncated)
+            messagebox.showinfo("Name truncated", f"Name truncated to {truncated}")
 
 # === Application Entry Point ===
 if __name__ == '__main__':
