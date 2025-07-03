@@ -12,6 +12,19 @@ _CHAR_MAP.update({
     "_PERIOD": ".",
 })
 
+# Reverse map used for encoding trainer names back to token strings
+_REVERSE_CHAR_MAP = {v: k for k, v in _CHAR_MAP.items()}
+
+def encode_trainer_name(name: str) -> str:
+    """Encode a string into a comma-separated list of tokens."""
+    tokens = []
+    for ch in name:
+        if ch not in _REVERSE_CHAR_MAP:
+            raise ValueError(f"Invalid character: {ch}")
+        tokens.append(_REVERSE_CHAR_MAP[ch])
+    tokens.append("_END")
+    return ", ".join(tokens)
+
 def decode_trainer_name(token_str: str) -> str:
     """Decode a comma-separated list of name tokens into a string."""
     name = []
@@ -42,6 +55,28 @@ def parse_trainer_data(path: str):
                     current_id = None
     return trainers
 
+def rewrite_trainer_name(path: str, trainer_id: str, token_str: str) -> None:
+    """Rewrite the trainerName entry for a given trainer id in the file."""
+    pattern_id = re.compile(rf"\[{re.escape(trainer_id)}\]\s*=\s*\{{")
+    pattern_name = re.compile(r'(\.trainerName\s*=\s*\{)([^}]*)(\})')
+    lines = []
+    with open(path, encoding='utf-8', errors='ignore') as f:
+        lines = f.readlines()
+
+    inside = False
+    for i, line in enumerate(lines):
+        if not inside:
+            if pattern_id.search(line):
+                inside = True
+        else:
+            m = pattern_name.search(line)
+            if m:
+                lines[i] = pattern_name.sub(rf"\1 {token_str} \3", line)
+                break
+
+    with open(path, 'w', encoding='utf-8', errors='ignore') as f:
+        f.writelines(lines)
+
 # === Constants ===
 defaultRelativePath = "src/Tables/trainer_data.c"
 spriteFolder = "sprites/"
@@ -52,11 +87,13 @@ class TrainerEditor(tk.Tk):
         super().__init__()
         self.title("Hopeless Trainer Editor - CFRU Mod")
         self.geometry("800x600")
+        self.resizable(False, False)
         self._create_menu()
         self._create_panes()
         self._create_widgets()
         # Cache of loaded trainer data
         self.trainer_data = []
+        self.current_trainer_index = None
 
     def _create_menu(self):
         menubar = tk.Menu(self)
@@ -90,23 +127,29 @@ class TrainerEditor(tk.Tk):
         self.trainerList.heading("#", text="#")
         self.trainerList.heading("Name", text="Trainer")
         self.trainerList.pack(fill=tk.BOTH, expand=True)
+        self.trainerList.bind("<<TreeviewSelect>>", self.on_select_trainer)
         self.panes.add(self.frameLeft, weight=1)
 
         # Right frame: Details
         self.frameRight = tk.Frame(self.panes)
         self.panes.add(self.frameRight, weight=3)
+        self.frameRight.grid_columnconfigure(0, weight=1)
+        self.frameRight.grid_columnconfigure(1, weight=1)
+        self.frameRight.grid_rowconfigure(2, weight=1)
 
     def _create_widgets(self):
         # DETAIL PANES: Use labelframes for each section
         # Basics
         self.frameBasics = ttk.LabelFrame(self.frameRight, text="Basics")
-        self.frameBasics.grid(row=0, column=0, padx=10, pady=5, sticky="nw")
+        self.frameBasics.grid(row=0, column=0, padx=10, pady=5, sticky="nwe")
         ttk.Label(self.frameBasics, text="Sprite:").grid(row=0, column=0, sticky="w")
         self.lblSprite = ttk.Label(self.frameBasics)
         self.lblSprite.grid(row=0, column=1)
         ttk.Label(self.frameBasics, text="Name:").grid(row=1, column=0, sticky="w")
         self.entryName = ttk.Entry(self.frameBasics)
         self.entryName.grid(row=1, column=1)
+        btnSave = ttk.Button(self.frameBasics, text="Save", command=self.save_trainer_name)
+        btnSave.grid(row=1, column=2, padx=(5,0))
         ttk.Label(self.frameBasics, text="Gender:").grid(row=2, column=0, sticky="w")
         self.genderVar = tk.StringVar()
         ttk.Radiobutton(self.frameBasics, text="Male", variable=self.genderVar, value="M").grid(row=2, column=1)
@@ -117,7 +160,7 @@ class TrainerEditor(tk.Tk):
 
         # Class
         self.frameClass = ttk.LabelFrame(self.frameRight, text="Class")
-        self.frameClass.grid(row=1, column=0, padx=10, pady=5, sticky="nw")
+        self.frameClass.grid(row=1, column=0, padx=10, pady=5, sticky="nwe")
         ttk.Label(self.frameClass, text="Class ID:").grid(row=0, column=0, sticky="w")
         self.spinClassId = tk.Spinbox(self.frameClass, from_=0, to=255, width=5)
         self.spinClassId.grid(row=0, column=1)
@@ -128,7 +171,7 @@ class TrainerEditor(tk.Tk):
 
         # Items
         self.frameItems = ttk.LabelFrame(self.frameRight, text="Items")
-        self.frameItems.grid(row=0, column=1, padx=10, pady=5, sticky="nw")
+        self.frameItems.grid(row=0, column=1, padx=10, pady=5, sticky="nwe")
         self.itemVars = []
         for i in range(4):
             ttk.Label(self.frameItems, text=f"Item {i+1}:").grid(row=i, column=0, sticky="w")
@@ -139,7 +182,7 @@ class TrainerEditor(tk.Tk):
 
         # Options
         self.frameOptions = ttk.LabelFrame(self.frameRight, text="Options")
-        self.frameOptions.grid(row=1, column=1, padx=10, pady=5, sticky="nw")
+        self.frameOptions.grid(row=1, column=1, padx=10, pady=5, sticky="nwe")
         ttk.Label(self.frameOptions, text="Music ID:").grid(row=0, column=0)
         self.spinMusic = tk.Spinbox(self.frameOptions, from_=0, to=255, width=5)
         self.spinMusic.grid(row=0, column=1)
@@ -155,7 +198,7 @@ class TrainerEditor(tk.Tk):
 
         # Party
         self.frameParty = ttk.LabelFrame(self.frameRight, text="Party")
-        self.frameParty.grid(row=2, column=0, columnspan=2, padx=10, pady=5, sticky="nw")
+        self.frameParty.grid(row=2, column=0, columnspan=2, padx=10, pady=5, sticky="nsew")
         self.partyTree = ttk.Treeview(self.frameParty, columns=("Species","Level"), show="headings", height=5)
         self.partyTree.heading("Species", text="Species")
         self.partyTree.heading("Level", text="Level")
@@ -180,6 +223,36 @@ class TrainerEditor(tk.Tk):
         for i in range(4):
             combo = ttk.Combobox(self.frameParty, values=["MOVE_TACKLE", "..."])
             combo.grid(row=4 + i//2, column=1 + i%2)
+
+    def on_select_trainer(self, event):
+        sel = self.trainerList.selection()
+        if not sel:
+            return
+        idx = self.trainerList.index(sel[0])
+        self.current_trainer_index = idx
+        tid, name = self.trainer_data[idx]
+        self.entryName.delete(0, tk.END)
+        self.entryName.insert(0, name)
+
+    def save_trainer_name(self):
+        if self.current_trainer_index is None:
+            return
+        new_name = self.entryName.get()
+        try:
+            encoded = encode_trainer_name(new_name)
+        except ValueError as e:
+            messagebox.showerror("Invalid Name", str(e))
+            return
+
+        tid, _ = self.trainer_data[self.current_trainer_index]
+        self.trainer_data[self.current_trainer_index] = (tid, new_name)
+        display = new_name if new_name else "???"
+        item_id = self.trainerList.get_children()[self.current_trainer_index]
+        self.trainerList.item(item_id, values=(self.current_trainer_index, display))
+
+        if hasattr(self, 'selectedFolder'):
+            path = os.path.join(self.selectedFolder, defaultRelativePath)
+            rewrite_trainer_name(path, tid, encoded)
 
     # === Placeholder command methods ===
     def open_folder(self):
@@ -219,7 +292,8 @@ class TrainerEditor(tk.Tk):
 
         for idx, (tid, name) in enumerate(trainers):
             self.trainer_data.append((tid, name))
-            self.trainerList.insert("", "end", values=(idx, name or tid))
+            display_name = name if name else "???"
+            self.trainerList.insert("", "end", values=(idx, display_name))
 
     def randomize(self):
         messagebox.showinfo("Randomize", "Party randomized!")
