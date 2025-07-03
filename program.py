@@ -36,17 +36,26 @@ def itemDisplayName(item_id: str) -> str:
     return item_id.replace('ITEM_', '').replace('_', ' ').title()
 
 def parseTrainerParties(path: str):
-    # Parse trainer parties and return mapping of party name to mons.
+    """Parse trainer parties and return mapping of party name to mons."""
     with open(path, encoding='utf-8', errors='ignore') as f:
         text = f.read()
 
     macros = {}
     macro_pattern = re.compile(r'#define\s+(\w+)\s*\\\n(.*?\})', re.S)
+    mon_pattern = re.compile(
+        r'\.lvl\s*=\s*(\d+).*?\.species\s*=\s*(SPECIES_[A-Z0-9_]+)'
+        r'(?:.*?\.heldItem\s*=\s*(ITEM_[A-Z0-9_]+))?',
+        re.S,
+    )
     for m in macro_pattern.finditer(text):
         body = m.group(2)
         mons = [
-            {'level': int(l), 'species': s}
-            for l, s in re.findall(r'\.lvl\s*=\s*(\d+).*?\.species\s*=\s*(SPECIES_[A-Z0-9_]+)', body, re.S)
+            {
+                'level': int(l),
+                'species': s,
+                'heldItem': h or 'ITEM_NONE',
+            }
+            for l, s, h in mon_pattern.findall(body)
         ]
         macros[m.group(1)] = mons
 
@@ -59,8 +68,12 @@ def parseTrainerParties(path: str):
             parties[name] = macros[body]
         else:
             parties[name] = [
-                {'level': int(l), 'species': s}
-                for l, s in re.findall(r'\.lvl\s*=\s*(\d+).*?\.species\s*=\s*(SPECIES_[A-Z0-9_]+)', body, re.S)
+                {
+                    'level': int(l),
+                    'species': s,
+                    'heldItem': h or 'ITEM_NONE',
+                }
+                for l, s, h in mon_pattern.findall(body)
             ]
     return parties
 
@@ -90,6 +103,9 @@ def rewriteTrainerParty(path: str, party_name: str, mons: list) -> None:
         new_lines.append('    {\n')
         new_lines.append(f'        .lvl = {mon["level"]},\n')
         new_lines.append(f'        .species = {mon["species"]},\n')
+        item = mon.get("heldItem")
+        if item and item != "ITEM_NONE":
+            new_lines.append(f'        .heldItem = {item},\n')
         new_lines.append('    },\n')
     new_lines.append('};\n')
 
@@ -116,6 +132,19 @@ def parsePokemonNames(path: str) -> dict:
                 i += 1
         i += 1
     return names
+
+def parseSpeciesHeader(path: str) -> list:
+    """Parse species identifiers from the constants header."""
+    pattern = re.compile(r'^#define\s+(SPECIES_[A-Z0-9_]+)\b', re.M)
+    species = []
+    with open(path, encoding='utf-8', errors='ignore') as f:
+        for line in f:
+            m = pattern.match(line.strip())
+            if m:
+                token = m.group(1)
+                if token not in species:
+                    species.append(token)
+    return species
 
 def encodeTrainerName(name: str) -> str:
     # Encode a string into a comma-separated list of tokens.
@@ -444,17 +473,27 @@ class TrainerEditor(tk.Tk):
         self.frameParty.grid(row=2, column=0, columnspan=2, padx=10, pady=5, sticky="nsew")
         self.frameParty.grid_rowconfigure(1, weight=1)
 
-        self.partyTree = ttk.Treeview(self.frameParty, columns=("Species", "Level"), show="headings", height=6)
+        self.partyTree = ttk.Treeview(
+            self.frameParty,
+            columns=("Species", "Level", "HeldItem"),
+            show="headings",
+            height=6,
+        )
         self.partyTree.heading("Species", text="Species", anchor="center")
         self.partyTree.heading("Level", text="Level", anchor="center")
+        self.partyTree.heading("HeldItem", text="Held Item", anchor="center")
         self.partyTree.column("Species", anchor="center")
-        self.partyTree.column("Level", anchor="center")
+        self.partyTree.column("Level", anchor="center", width=60)
+        self.partyTree.column("HeldItem", anchor="center")
         self.partyTree.grid(row=0, column=0, columnspan=4)
+        self.partyTree.bind("<<TreeviewSelect>>", self.on_select_mon)
 
         btnAdd = ttk.Button(self.frameParty, text="+ Add", command=self.add_party_mon)
         btnAdd.grid(row=2, column=0)
+        btnUpdate = ttk.Button(self.frameParty, text="Update", command=self.update_party_mon)
+        btnUpdate.grid(row=2, column=1)
         btnRemove = ttk.Button(self.frameParty, text="- Remove", command=self.remove_party_mon)
-        btnRemove.grid(row=2, column=1)
+        btnRemove.grid(row=2, column=2)
 
         ttk.Label(self.frameParty, text="Species:").grid(row=3, column=0)
         self.comboSpecies = ttk.Combobox(self.frameParty, values=self.species_names, state="readonly")
@@ -504,19 +543,42 @@ class TrainerEditor(tk.Tk):
         if party_name and party_name in self.parties:
             for mon in self.parties[party_name]:
                 disp = self.name_from_species.get(mon['species'], mon['species'])
-                self.partyTree.insert('', 'end', values=(disp, mon['level']))
+                item_disp = self.name_from_id.get(mon.get('heldItem', 'ITEM_NONE'), mon.get('heldItem', 'ITEM_NONE'))
+                self.partyTree.insert('', 'end', values=(disp, mon['level'], item_disp))
 
     def add_party_mon(self):
         species = self.comboSpecies.get()
         level = self.spinLevel.get()
+        item = self.comboHeld.get()
         if not species or not level:
             return
-        self.partyTree.insert('', 'end', values=(species, level))
+        self.partyTree.insert('', 'end', values=(species, level, item))
 
     def remove_party_mon(self):
         sel = self.partyTree.selection()
         if sel:
             self.partyTree.delete(sel[0])
+
+    def update_party_mon(self):
+        sel = self.partyTree.selection()
+        if not sel:
+            return
+        species = self.comboSpecies.get()
+        level = self.spinLevel.get()
+        item = self.comboHeld.get()
+        if not species or not level:
+            return
+        self.partyTree.item(sel[0], values=(species, level, item))
+
+    def on_select_mon(self, event):
+        sel = self.partyTree.selection()
+        if not sel:
+            return
+        species, level, item = self.partyTree.item(sel[0], 'values')
+        self.comboSpecies.set(species)
+        self.spinLevel.delete(0, tk.END)
+        self.spinLevel.insert(0, level)
+        self.comboHeld.set(item)
 
     def saveTrainerName(self):
         if self.current_trainer_index is None:
@@ -566,9 +628,10 @@ class TrainerEditor(tk.Tk):
             return
         mons = []
         for item in self.partyTree.get_children():
-            species, level = self.partyTree.item(item, 'values')
+            species, level, held = self.partyTree.item(item, 'values')
             spec_id = self.species_from_name.get(species, species)
-            mons.append({'level': int(level), 'species': spec_id})
+            item_id = self.id_from_name.get(held, held)
+            mons.append({'level': int(level), 'species': spec_id, 'heldItem': item_id})
         self.parties[party_name] = mons
         if self.cfruFolder:
             path = os.path.join(self.cfruFolder, partyRelativePath)
@@ -610,10 +673,15 @@ class TrainerEditor(tk.Tk):
             )
             return
 
+        species_path = os.path.join(folder, 'include', 'constants', 'species.h')
+
         self.cfruFolder = folder
         self.parties = parseTrainerParties(trainer_parties_path)
-        species = {mon['species'] for mons in self.parties.values() for mon in mons}
-        self.species_names = sorted(species)
+        if os.path.isfile(species_path):
+            self.species_names = parseSpeciesHeader(species_path)
+        else:
+            species = {mon['species'] for mons in self.parties.values() for mon in mons}
+            self.species_names = sorted(species)
         self.updateSpeciesBox()
         self.comboHeld['values'] = self.item_names
         self.loadTrainerData(trainer_data_path)
