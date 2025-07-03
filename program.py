@@ -86,7 +86,7 @@ def parse_trainer_data(path: str):
                     continue
 
                 m = pattern_name.search(line)
-                if m:
+                if m and 'name' not in current:
                     current['name'] = decode_trainer_name(m.group(1))
                 m = pattern_gender.search(line)
                 if m:
@@ -181,6 +181,12 @@ class TrainerEditor(tk.Tk):
         self.title("Useful Trainer Editor")
         self.geometry("800x600")
         self.resizable(False, False)
+        # Center the window on screen
+        self.update_idletasks()
+        try:
+            self.eval('tk::PlaceWindow . center')
+        except tk.TclError:
+            pass
 
         ref = os.path.join(os.path.dirname(__file__), "item_tables_reference.txt")
         self.item_ids = parse_item_ids(ref) if os.path.exists(ref) else ["ITEM_NONE"]
