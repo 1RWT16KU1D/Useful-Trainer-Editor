@@ -1,5 +1,6 @@
 import tkinter as tk
 from tkinter import filedialog, messagebox, ttk
+from PIL import Image, ImageTk
 import os, re
 
 # Mapping for trainer name decoding
@@ -59,10 +60,8 @@ def rewrite_trainer_name(path: str, trainer_id: str, token_str: str) -> None:
     """Rewrite the trainerName entry for a given trainer id in the file."""
     pattern_id = re.compile(rf"\[{re.escape(trainer_id)}\]\s*=\s*\{{")
     pattern_name = re.compile(r'(\.trainerName\s*=\s*\{)([^}]*)(\})')
-    lines = []
     with open(path, encoding='utf-8', errors='ignore') as f:
         lines = f.readlines()
-
     inside = False
     for i, line in enumerate(lines):
         if not inside:
@@ -73,7 +72,6 @@ def rewrite_trainer_name(path: str, trainer_id: str, token_str: str) -> None:
             if m:
                 lines[i] = pattern_name.sub(rf"\1 {token_str} \3", line)
                 break
-
     with open(path, 'w', encoding='utf-8', errors='ignore') as f:
         f.writelines(lines)
 
@@ -85,54 +83,63 @@ spriteFolder = "sprites/"
 class TrainerEditor(tk.Tk):
     def __init__(self):
         super().__init__()
-        self.title("Hopeless Trainer Editor - CFRU Mod")
+        style = ttk.Style(self)
+        style.configure("Treeview.Heading", padding=(5, 2))
+        self.title("Useful Trainer Editor")
         self.geometry("800x600")
         self.resizable(False, False)
+        self.trainer_data = []
+        self.current_trainer_index = None
         self._create_menu()
         self._create_panes()
         self._create_widgets()
-        # Cache of loaded trainer data
-        self.trainer_data = []
-        self.current_trainer_index = None
 
     def _create_menu(self):
         menubar = tk.Menu(self)
-        # File Menu
         fileMenu = tk.Menu(menubar, tearoff=0)
         fileMenu.add_command(label="Open CFRU Folder", command=self.open_folder)
         fileMenu.add_separator()
         fileMenu.add_command(label="Exit", command=self.quit)
         menubar.add_cascade(label="File", menu=fileMenu)
-        # Trainer Menu
         trainerMenu = tk.Menu(menubar, tearoff=0)
         trainerMenu.add_command(label="Randomize", command=self.randomize)
         menubar.add_cascade(label="Trainer", menu=trainerMenu)
-        # Settings Menu (placeholder)
         settingsMenu = tk.Menu(menubar, tearoff=0)
         menubar.add_cascade(label="Settings", menu=settingsMenu)
-        # Help Menu
         helpMenu = tk.Menu(menubar, tearoff=0)
         helpMenu.add_command(label="About")
         menubar.add_cascade(label="Help", menu=helpMenu)
         self.config(menu=menubar)
 
     def _create_panes(self):
-        # Main horizontal paned window
-        self.panes = ttk.Panedwindow(self, orient=tk.HORIZONTAL)
+        # Use tk.PanedWindow to allow sashwidth
+        self.panes = tk.PanedWindow(self, orient=tk.HORIZONTAL, sashwidth=0)
         self.panes.pack(fill=tk.BOTH, expand=True)
 
-        # Left frame: Trainer list
+        # Left frame: fixed width list
         self.frameLeft = tk.Frame(self.panes, width=200)
-        self.trainerList = ttk.Treeview(self.frameLeft, columns=("#","Name"), show="headings")
-        self.trainerList.heading("#", text="#")
-        self.trainerList.heading("Name", text="Trainer")
-        self.trainerList.pack(fill=tk.BOTH, expand=True)
+        self.frameLeft.pack_propagate(False)
+        self.trainerList = ttk.Treeview(
+            self.frameLeft,
+            columns=("ID","Name"),
+            show="headings",
+            height=25
+        )
+        self.trainerList.heading("ID", text="ID", anchor="center")
+        self.trainerList.heading("Name", text="Trainer", anchor="center")
+        self.trainerList.column("ID", anchor="center", width=50)
+        self.trainerList.column("Name", anchor="center", width=130)
+        # scrollbar if needed
+        scrollbar = ttk.Scrollbar(self.frameLeft, orient=tk.VERTICAL, command=self.trainerList.yview)
+        self.trainerList.configure(yscrollcommand=scrollbar.set)
+        self.trainerList.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+        scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
         self.trainerList.bind("<<TreeviewSelect>>", self.on_select_trainer)
-        self.panes.add(self.frameLeft, weight=1)
+        self.panes.add(self.frameLeft, stretch='never')
 
-        # Right frame: Details
+        # Right frame: details
         self.frameRight = tk.Frame(self.panes)
-        self.panes.add(self.frameRight, weight=3)
+        self.panes.add(self.frameRight, stretch='always')
         self.frameRight.grid_columnconfigure(0, weight=1)
         self.frameRight.grid_columnconfigure(1, weight=1)
         self.frameRight.grid_rowconfigure(2, weight=1)
