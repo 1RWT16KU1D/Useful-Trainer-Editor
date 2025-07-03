@@ -1,7 +1,46 @@
 import tkinter as tk
 from tkinter import filedialog, messagebox, ttk
-from PIL import Image, ImageTk
 import os, re
+
+# Mapping for trainer name decoding
+_CHAR_MAP = {f"_{c}": c for c in "ABCDEFGHIJKLMNOPQRSTUVWXYZ"}
+_CHAR_MAP.update({f"_{c.lower()}": c.lower() for c in "ABCDEFGHIJKLMNOPQRSTUVWXYZ"})
+_CHAR_MAP.update({f"_{d}": d for d in "0123456789"})
+_CHAR_MAP.update({
+    "_SPACE": " ",
+    "_AMPERSAND": "&",
+    "_PERIOD": ".",
+})
+
+def decode_trainer_name(token_str: str) -> str:
+    """Decode a comma-separated list of name tokens into a string."""
+    name = []
+    for token in token_str.split(','):
+        t = token.strip()
+        if not t or t == '_END':
+            break
+        name.append(_CHAR_MAP.get(t, ''))
+    return ''.join(name)
+
+def parse_trainer_data(path: str):
+    """Return list of (trainer_id, trainer_name) from the given file."""
+    trainers = []
+    current_id = None
+    pattern_id = re.compile(r'\[(.+?)\]\s*=\s*\{')
+    pattern_name = re.compile(r'\.trainerName\s*=\s*\{([^}]*)\}')
+    with open(path, encoding='utf-8', errors='ignore') as f:
+        for line in f:
+            m = pattern_id.search(line)
+            if m:
+                current_id = m.group(1).strip()
+                continue
+            if current_id:
+                m = pattern_name.search(line)
+                if m:
+                    name = decode_trainer_name(m.group(1))
+                    trainers.append((current_id, name))
+                    current_id = None
+    return trainers
 
 # === Constants ===
 defaultRelativePath = "src/Tables/trainer_data.c"
@@ -16,6 +55,8 @@ class TrainerEditor(tk.Tk):
         self._create_menu()
         self._create_panes()
         self._create_widgets()
+        # Cache of loaded trainer data
+        self.trainer_data = []
 
     def _create_menu(self):
         menubar = tk.Menu(self)
@@ -160,10 +201,25 @@ class TrainerEditor(tk.Tk):
             return
 
         self.selectedFolder = folder
+        self.load_trainer_data(trainer_data_path)
         messagebox.showinfo(
             "Folder Opened",
             f"Loaded trainer data from:\n{trainer_data_path}"
         )
+
+    def load_trainer_data(self, path: str):
+        """Parse trainer data file and populate the tree view."""
+        self.trainer_data.clear()
+        self.trainerList.delete(*self.trainerList.get_children())
+        try:
+            trainers = parse_trainer_data(path)
+        except Exception as e:
+            messagebox.showerror("Parse Error", f"Failed to parse trainer data:\n{e}")
+            return
+
+        for idx, (tid, name) in enumerate(trainers):
+            self.trainer_data.append((tid, name))
+            self.trainerList.insert("", "end", values=(idx, name or tid))
 
     def randomize(self):
         messagebox.showinfo("Randomize", "Party randomized!")
