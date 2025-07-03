@@ -35,6 +35,68 @@ def item_display_name(item_id: str) -> str:
     """Convert an ITEM_* identifier into a user friendly name."""
     return item_id.replace('ITEM_', '').replace('_', ' ').title()
 
+def parse_trainer_parties(path: str):
+    """Parse trainer parties and return mapping of party name to mons."""
+    with open(path, encoding='utf-8', errors='ignore') as f:
+        text = f.read()
+
+    macros = {}
+    macro_pattern = re.compile(r'#define\s+(\w+)\s*\\\n(.*?\})', re.S)
+    for m in macro_pattern.finditer(text):
+        body = m.group(2)
+        mons = [
+            {'level': int(l), 'species': s}
+            for l, s in re.findall(r'\.lvl\s*=\s*(\d+).*?\.species\s*=\s*(SPECIES_[A-Z0-9_]+)', body, re.S)
+        ]
+        macros[m.group(1)] = mons
+
+    parties = {}
+    pattern = re.compile(r'struct\s+\w+\s+(sParty_\w+)\[\]\s*=\s*\{(.*?)\};', re.S)
+    for m in pattern.finditer(text):
+        name = m.group(1)
+        body = m.group(2).strip()
+        if body in macros:
+            parties[name] = macros[body]
+        else:
+            parties[name] = [
+                {'level': int(l), 'species': s}
+                for l, s in re.findall(r'\.lvl\s*=\s*(\d+).*?\.species\s*=\s*(SPECIES_[A-Z0-9_]+)', body, re.S)
+            ]
+    return parties
+
+def rewrite_trainer_party(path: str, party_name: str, mons: list) -> None:
+    """Rewrite a trainer party definition."""
+    pattern_start = re.compile(r'struct\s+\w+\s+' + re.escape(party_name) + r'\[\]\s*=\s*\{')
+    with open(path, encoding='utf-8', errors='ignore') as f:
+        lines = f.readlines()
+
+    inside = False
+    start = end = None
+    for i, line in enumerate(lines):
+        if not inside:
+            if pattern_start.search(line):
+                start = i
+                inside = True
+        else:
+            if line.strip().startswith('};'):
+                end = i
+                break
+
+    if start is None or end is None:
+        return
+
+    new_lines = [lines[start]]
+    for mon in mons:
+        new_lines.append('    {\n')
+        new_lines.append(f'        .lvl = {mon["level"]},\n')
+        new_lines.append(f'        .species = {mon["species"]},\n')
+        new_lines.append('    },\n')
+    new_lines.append('};\n')
+
+    lines[start:end+1] = new_lines
+    with open(path, 'w', encoding='utf-8', errors='ignore') as f:
+        f.writelines(lines)
+
 def encode_trainer_name(name: str) -> str:
     """Encode a string into a comma-separated list of tokens."""
     tokens = []
@@ -67,6 +129,7 @@ def parse_trainer_data(path: str):
     pattern_items = re.compile(r'\.items\s*=\s*\{([^}]*)\}')
     pattern_double = re.compile(r'\.doubleBattle\s*=\s*(TRUE|FALSE)')
     pattern_partyflags = re.compile(r'\.partyFlags\s*=\s*([^,]+)')
+    pattern_party = re.compile(r'\.party\s*=\s*\{[^=]*=\s*(sParty_[A-Za-z0-9_]+)')
 
     with open(path, encoding='utf-8', errors='ignore') as f:
         lines = f.readlines()
@@ -127,7 +190,11 @@ def parse_trainer_data(path: str):
         m = pattern_partyflags.search(line)
         if m:
             current['partyFlags'] = m.group(1).strip()
-
+            continue
+        m = pattern_party.search(line)
+        if m:
+            current['party'] = m.group(1)
+            continue
     if current:
         trainers.append(current)
     return trainers
@@ -195,6 +262,7 @@ def rewrite_trainer_options(path: str, trainer_id: str, gender: str,
 
 # === Constants ===
 defaultRelativePath = "src/Tables/trainer_data.c"
+partyRelativePath = "src/Tables/trainer_parties.h"
 spriteFolder = "sprites/"
 
 # === Main Application Class ===
@@ -216,6 +284,8 @@ class TrainerEditor(tk.Tk):
         self.name_from_id = dict(zip(self.item_ids, self.item_names))
 
         self.trainer_data = []
+        self.parties = {}
+        self.species_names = []
         self.current_trainer_index = None
         self._create_menu()
         self._create_panes()
@@ -297,9 +367,6 @@ class TrainerEditor(tk.Tk):
         self.genderVar = tk.StringVar()
         ttk.Radiobutton(self.frameBasics, text="Male", variable=self.genderVar, value="M").grid(row=2, column=1)
         ttk.Radiobutton(self.frameBasics, text="Female", variable=self.genderVar, value="F").grid(row=2, column=2)
-        ttk.Label(self.frameBasics, text="# ID:").grid(row=3, column=0, sticky="w")
-        self.spinId = tk.Spinbox(self.frameBasics, from_=0, to=255, width=5)
-        self.spinId.grid(row=3, column=1)
 
         # Class
         self.frameClass = ttk.LabelFrame(self.frameRight, text="Class")
@@ -349,12 +416,12 @@ class TrainerEditor(tk.Tk):
         self.partyTree.heading("Species", text="Species")
         self.partyTree.heading("Level", text="Level")
         self.partyTree.grid(row=0, column=0, columnspan=4)
-        btnAdd = ttk.Button(self.frameParty, text="+ Add")
+        btnAdd = ttk.Button(self.frameParty, text="+ Add", command=self.add_party_mon)
         btnAdd.grid(row=1, column=0)
-        btnRemove = ttk.Button(self.frameParty, text="- Remove")
+        btnRemove = ttk.Button(self.frameParty, text="- Remove", command=self.remove_party_mon)
         btnRemove.grid(row=1, column=1)
         ttk.Label(self.frameParty, text="Species:").grid(row=2, column=0)
-        self.comboSpecies = ttk.Combobox(self.frameParty, values=["SPECIES_BULBASAUR", "..."])
+        self.comboSpecies = ttk.Combobox(self.frameParty, values=self.species_names, state="readonly")
         self.comboSpecies.grid(row=2, column=1)
         ttk.Label(self.frameParty, text="Level:").grid(row=2, column=2)
         self.spinLevel = tk.Spinbox(self.frameParty, from_=1, to=100, width=5)
@@ -363,7 +430,7 @@ class TrainerEditor(tk.Tk):
         self.spinEVs = tk.Spinbox(self.frameParty, from_=0, to=255, width=5)
         self.spinEVs.grid(row=3, column=1)
         ttk.Label(self.frameParty, text="Held Item:").grid(row=3, column=2)
-        self.comboHeld = ttk.Combobox(self.frameParty, values=["ITEM_NONE", "..."])
+        self.comboHeld = ttk.Combobox(self.frameParty, values=self.item_names, state="readonly")
         self.comboHeld.grid(row=3, column=3)
         ttk.Label(self.frameParty, text="Attacks:").grid(row=4, column=0)
         for i in range(4):
@@ -394,6 +461,23 @@ class TrainerEditor(tk.Tk):
             var.set(self.name_from_id.get(item, item))
         for var in self.itemVars[len(items):]:
             var.set(self.name_from_id.get('ITEM_NONE', 'None'))
+        self.partyTree.delete(*self.partyTree.get_children())
+        party_name = data.get('party')
+        if party_name and party_name in self.parties:
+            for mon in self.parties[party_name]:
+                self.partyTree.insert('', 'end', values=(mon['species'], mon['level']))
+
+    def add_party_mon(self):
+        species = self.comboSpecies.get()
+        level = self.spinLevel.get()
+        if not species or not level:
+            return
+        self.partyTree.insert('', 'end', values=(species, level))
+
+    def remove_party_mon(self):
+        sel = self.partyTree.selection()
+        if sel:
+            self.partyTree.delete(sel[0])
 
     def save_trainer_name(self):
         if self.current_trainer_index is None:
@@ -434,10 +518,27 @@ class TrainerEditor(tk.Tk):
             path = os.path.join(self.selectedFolder, defaultRelativePath)
             rewrite_trainer_options(path, data['id'], data['gender'], data['double'], data['partyFlags'], data['items'])
 
+    def save_party(self):
+        if self.current_trainer_index is None:
+            return
+        data = self.trainer_data[self.current_trainer_index]
+        party_name = data.get('party')
+        if not party_name:
+            return
+        mons = []
+        for item in self.partyTree.get_children():
+            species, level = self.partyTree.item(item, 'values')
+            mons.append({'level': int(level), 'species': species})
+        self.parties[party_name] = mons
+        if hasattr(self, 'selectedFolder'):
+            path = os.path.join(self.selectedFolder, partyRelativePath)
+            rewrite_trainer_party(path, party_name, mons)
+
     def save_all(self):
         """Save name and option edits."""
         self.save_trainer_name()
         self.save_options()
+        self.save_party()
 
     # === Placeholder command methods ===
     def open_folder(self):
@@ -451,14 +552,26 @@ class TrainerEditor(tk.Tk):
             return
 
         trainer_data_path = os.path.join(folder, defaultRelativePath)
+        trainer_parties_path = os.path.join(folder, partyRelativePath)
         if not os.path.isfile(trainer_data_path):
             messagebox.showerror(
                 "File Not Found",
                 f"Could not locate trainer data at:\n{trainer_data_path}"
             )
             return
+        if not os.path.isfile(trainer_parties_path):
+            messagebox.showerror(
+                "File Not Found",
+                f"Could not locate trainer parties at:\n{trainer_parties_path}"
+            )
+            return
 
         self.selectedFolder = folder
+        self.parties = parse_trainer_parties(trainer_parties_path)
+        species = {mon['species'] for mons in self.parties.values() for mon in mons}
+        self.species_names = sorted(species)
+        self.comboSpecies['values'] = self.species_names
+        self.comboHeld['values'] = self.item_names
         self.load_trainer_data(trainer_data_path)
         messagebox.showinfo(
             "Success",
