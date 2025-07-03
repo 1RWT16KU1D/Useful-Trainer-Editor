@@ -142,10 +142,28 @@ class TrainerEditor(tk.Tk):
 
     # === Placeholder command methods ===
     def open_folder(self):
+        """Prompt the user to select the base CFRU folder and load files."""
         self.selectFolder()
 
     def selectFolder(self):
-        pass
+        """Open a folder selection dialog and validate required files."""
+        folder = filedialog.askdirectory(title="Select CFRU folder")
+        if not folder:
+            return
+
+        trainer_data_path = os.path.join(folder, defaultRelativePath)
+        if not os.path.isfile(trainer_data_path):
+            messagebox.showerror(
+                "File Not Found",
+                f"Could not locate trainer data at:\n{trainer_data_path}"
+            )
+            return
+
+        self.selectedFolder = folder
+        messagebox.showinfo(
+            "Folder Opened",
+            f"Loaded trainer data from:\n{trainer_data_path}"
+        )
 
     def randomize(self):
         messagebox.showinfo("Randomize", "Party randomized!")
