@@ -93,9 +93,16 @@ class TrainerApp(tk.Tk):
         browseBtn = tk.Button(topFrame, text="Open CFRU Folder", command=self.selectFolder)
         browseBtn.pack()
 
-        self.listBox = tk.Listbox(self, width=50)
-        self.listBox.pack(side=tk.LEFT, fill=tk.Y, padx=10, pady=10)
+        listFrame = tk.Frame(self)
+        listFrame.pack(side=tk.LEFT, fill=tk.Y, padx=10, pady=10)
+
+        self.listBox = tk.Listbox(listFrame, width=50)
+        self.listBox.pack(side=tk.LEFT, fill=tk.Y)
         self.listBox.bind("<<ListboxSelect>>", self.displayTrainer)
+
+        self.scrollbar = tk.Scrollbar(listFrame, orient=tk.VERTICAL, command=self.listBox.yview)
+        self.scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
+        self.listBox.config(yscrollcommand=self.scrollbar.set)
 
         self.infoLabel = tk.Label(self, text="No trainer loaded yet", font=("Arial", 12))
         self.infoLabel.pack(pady=10)
@@ -116,8 +123,10 @@ class TrainerApp(tk.Tk):
         self.trainers = parseTrainers(trainerFile)
         self.listBox.delete(0, tk.END)
 
+        trainerCount = 0
         for trainer in self.trainers:
-            self.listBox.insert(tk.END, f"{trainer['name']} ({trainer['id']})")
+            self.listBox.insert(tk.END, f"{trainerCount} - {trainer['name']}")
+            trainerCount += 1
 
         messagebox.showinfo("Success", f"Loaded {len(self.trainers)} trainers.")
 
